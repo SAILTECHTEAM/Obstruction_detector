@@ -5,7 +5,7 @@
 
 [**Haotong Lin**](https://haotongl.github.io/)<sup>&ast;</sup> · [**Sili Chen**](https://github.com/SiliChen321)<sup>&ast;</sup> · [**Jun Hao Liew**](https://liewjunhao.github.io/)<sup>&ast;</sup> · [**Donny Y. Chen**](https://donydchen.github.io)<sup>&ast;</sup> · [**Zhenyu Li**](https://zhyever.github.io/) · [**Guang Shi**](https://scholar.google.com/citations?user=MjXxWbUAAAAJ&hl=en) · [**Jiashi Feng**](https://scholar.google.com.sg/citations?user=Q8iay0gAAAAJ&hl=en)
 <br>
-[**Bingyi Kang**](https://bingykang.github.io/)<sup>&ast;&dagger;</sup>
+[**Bingyi Kang**](https://bingyikang.com/)<sup>&ast;&dagger;</sup>
 
 &dagger;project lead&emsp;&ast;Equal Contribution
 
