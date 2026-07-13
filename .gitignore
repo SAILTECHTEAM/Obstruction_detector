@@ -31,5 +31,6 @@ input_images*/
 
 .vscode
 src/debug_main.py
+src/outputs
 temp*.png
 /outputs

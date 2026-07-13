@@ -17,6 +17,8 @@ Unified Inference Service
 Provides unified interface for local and remote inference
 """
 
+import os
+
 from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import requests
@@ -148,8 +150,14 @@ class InferenceService:
 
         # Submit task
         typer.echo("Submitting inference task to backend...")
+        # Sent automatically when the backend was started with a matching --api-key /
+        # DA3_BACKEND_API_KEY, so client and server share the same env-var convention.
+        api_key = os.environ.get("DA3_BACKEND_API_KEY")
+        headers = {"X-API-Key": api_key} if api_key else None
         try:
-            response = requests.post(f"{backend_url}/inference", json=payload, timeout=30)
+            response = requests.post(
+                f"{backend_url}/inference", json=payload, headers=headers, timeout=30
+            )
             response.raise_for_status()
             result = response.json()
 

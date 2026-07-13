@@ -30,17 +30,19 @@ The CLI can run fully offline or connect to the backend for cached weights and t
 # 🔧 Start backend service (optional, keeps model resident in GPU memory)
 da3 backend --model-dir depth-anything/DA3NESTED-GIANT-LARGE
 
-# 🚀 Use auto mode to process input
+# 🚀 Use auto mode to process input (local inference, no backend involved)
 da3 auto path/to/input --export-dir ./workspace/scene001
 
 # ♻️ Reuse backend for next job
 da3 auto path/to/video.mp4 \
-    --export-dir ./workspace/scene002 \
+    --export-dir workspace/gallery/scene002 \
     --use-backend \
     --backend-url http://localhost:8008
 ```
 
 Each export directory contains `scene.glb`, `scene.jpg`, and optional extras such as `depth_vis/` or `gs_video/` depending on the requested format.
+
+> **Note on `--export-dir` with `--use-backend`:** when a job is submitted to a running `da3 backend` over HTTP, `--export-dir` should be a relative path under that backend's `--gallery-dir` (`workspace/gallery` by default). This doesn't apply to local (non-backend) runs, where `--export-dir` can be anywhere you have write access. The `--use-backend` snippets elsewhere in this doc use short placeholders like `./output` purely to illustrate flag syntax — when actually running with `--use-backend`, use a path under the backend's gallery directory instead (e.g. `workspace/gallery/output`).
 
 ## 📚 Command Reference
 
@@ -336,12 +338,33 @@ da3 backend [OPTIONS]
 | `--host` | str | `127.0.0.1` | Host address to bind to |
 | `--port` | int | `8008` | Port number to bind to |
 | `--gallery-dir` | str | Default gallery dir | Gallery directory path (optional) |
+| `--api-key` | str | `None` | Require this key (as an `X-API-Key` header) on `/inference` requests. Falls back to the `DA3_BACKEND_API_KEY` env var, then to an auto-generated key (see below). |
+| `--allow-unauthenticated` | bool | `False` | Skip authentication entirely on a non-loopback `--host`, instead of using an auto-generated key. |
 
 **Features:**
 - 🎯 Keeps model resident in GPU memory
 - 🔌 Provides REST inference API
 - 📊 Integrated dashboard and status monitoring
 - 🖼️ Optional gallery browser (if `--gallery-dir` is provided)
+- 📁 Exports for a given request are written within the configured `--gallery-dir`
+- 🔑 Optional `X-API-Key` authentication for `/inference` (see below)
+
+**Authentication:**
+- By default the server binds to `127.0.0.1` (localhost-only) and requires no authentication, matching the examples below — nothing changes if you're not exposing the backend beyond your own machine.
+- If you bind `--host` to anything other than localhost and don't set `--api-key`, the backend generates a random key for that run and prints it on startup, e.g.:
+  ```
+  No --api-key was set, so one was generated for this run:
+    X-API-Key: FdGcurw5z45kuGBjd5wO5S1agAf-iknYnfHhpWA3RmA
+  ```
+  Copy that value into `DA3_BACKEND_API_KEY` in the environment of anything that submits jobs to it (see below) — no need to come up with a key yourself.
+- For a key that stays the same across restarts (e.g. scripted/production setups), set it yourself before starting the backend:
+  ```bash
+  export DA3_BACKEND_API_KEY=$(openssl rand -hex 32)   # or any secret string you prefer
+  da3 backend --host 0.0.0.0 --model-dir depth-anything/DA3NESTED-GIANT-LARGE
+  ```
+  `--api-key "$DA3_BACKEND_API_KEY"` works the same way if you'd rather pass it explicitly.
+- On the client side, `da3 ... --use-backend` automatically reads `DA3_BACKEND_API_KEY` from its own environment and sends it — set the same env var wherever you run those commands from (same machine or not).
+- Pass `--allow-unauthenticated` if you'd rather skip authentication altogether (e.g. a network you already fully trust).
 
 **Available Endpoints:**
 - 🏠 `/` - Home page
@@ -355,13 +378,14 @@ da3 backend [OPTIONS]
 # 🚀 Basic backend service
 da3 backend --model-dir depth-anything/DA3NESTED-GIANT-LARGE
 
-# 🖼️ Backend with gallery
+# 🖼️ Backend with gallery, reachable beyond localhost, with a fixed API key
 da3 backend \
     --model-dir depth-anything/DA3NESTED-GIANT-LARGE \
     --device cuda \
     --host 0.0.0.0 \
     --port 8008 \
-    --gallery-dir ./workspace
+    --gallery-dir ./workspace \
+    --api-key "$DA3_BACKEND_API_KEY"
 
 # 💻 Use CPU
 da3 backend --model-dir depth-anything/DA3NESTED-GIANT-LARGE --device cpu

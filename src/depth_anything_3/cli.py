@@ -643,6 +643,17 @@ def backend(
     host: str = typer.Option("127.0.0.1", help="Host to bind to"),
     port: int = typer.Option(8008, help="Port to bind to"),
     gallery_dir: str = typer.Option(DEFAULT_GALLERY_DIR, help="Gallery directory path (optional)"),
+    api_key: str = typer.Option(
+        None,
+        help="Require this API key (X-API-Key header) on inference requests. Falls back "
+        "to the DA3_BACKEND_API_KEY env var, or an auto-generated key when binding to a "
+        "non-loopback host.",
+    ),
+    allow_unauthenticated: bool = typer.Option(
+        False,
+        help="Skip authentication entirely on a non-loopback host, instead of using an "
+        "auto-generated API key.",
+    ),
 ):
     """Start model backend service with integrated gallery."""
     typer.echo("=" * 60)
@@ -651,11 +662,13 @@ def backend(
     typer.echo(f"Model directory: {model_dir}")
     typer.echo(f"Device: {device}")
 
-    # Check if gallery directory exists
-    if gallery_dir and os.path.exists(gallery_dir):
+    # The gallery directory is also where /inference writes exports, so make sure it
+    # exists up front rather than treating a fresh checkout as "no gallery configured".
+    if gallery_dir:
+        os.makedirs(gallery_dir, exist_ok=True)
         typer.echo(f"Gallery directory: {gallery_dir}")
     else:
-        gallery_dir = None  # Disable gallery if directory doesn't exist
+        gallery_dir = None
 
     typer.echo()
     typer.echo("📡 Server URLs (Ctrl/CMD+Click to open):")
@@ -669,7 +682,15 @@ def backend(
     typer.echo("=" * 60)
 
     try:
-        start_server(model_dir, device, host, port, gallery_dir)
+        start_server(
+            model_dir,
+            device,
+            host,
+            port,
+            gallery_dir,
+            api_key=api_key,
+            allow_unauthenticated=allow_unauthenticated,
+        )
     except KeyboardInterrupt:
         typer.echo("\n👋 Backend server stopped.")
     except Exception as e:

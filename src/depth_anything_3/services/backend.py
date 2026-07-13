@@ -18,8 +18,11 @@ Model backend service for Depth Anything 3.
 Provides HTTP API for model inference with persistent model loading.
 """
 
+import hmac
 import os
 import posixpath
+import re
+import secrets
 import time
 import uuid
 
@@ -29,11 +32,12 @@ from urllib.parse import quote
 import numpy as np
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from ..api import DepthAnything3
+from ..utils.export import SUPPORTED_EXPORT_FORMATS
 from ..utils.memory import (
     get_gpu_memory_info,
     cleanup_cuda_memory,
@@ -60,6 +64,20 @@ class InferenceRequest(BaseModel):
     show_cameras: bool = True
     # Feat_vis export parameters
     feat_vis_fps: int = 15
+
+    @field_validator("export_format")
+    @classmethod
+    def _validate_export_format(cls, value: str) -> str:
+        """Restrict export_format to the server's known/trusted export dispatcher formats,
+        instead of letting an arbitrary client-supplied string reach the export() dispatcher."""
+        tokens = value.split("-") if value else [value]
+        unknown = sorted(set(tokens) - SUPPORTED_EXPORT_FORMATS)
+        if unknown:
+            raise ValueError(
+                f"Unsupported export_format value(s): {unknown}. "
+                f"Supported formats: {sorted(SUPPORTED_EXPORT_FORMATS)}"
+            )
+        return value
 
 
 class InferenceResponse(BaseModel):
@@ -159,6 +177,7 @@ class ModelBackend:
 # Global backend instance
 _backend: Optional[ModelBackend] = None
 _app: Optional[FastAPI] = None
+_gallery_dir: Optional[str] = None
 _tasks: Dict[str, TaskStatus] = {}
 _executor = ThreadPoolExecutor(max_workers=1)  # Restrict to single-task execution
 _running_task_id: Optional[str] = None  # Currently running task ID
@@ -285,6 +304,10 @@ def _run_inference_task(task_id: str):
         }
 
         if request.export_dir:
+            # Re-check against the current configuration: this task may have sat in the
+            # queue for a while after the initial request-time check, and configuration
+            # can differ if the process was restarted with a different gallery_dir.
+            validate_export_dir(request.export_dir, _gallery_dir)
             inference_kwargs["export_dir"] = request.export_dir
 
         if request.extrinsics:
@@ -556,9 +579,68 @@ def build_group_manifest(root_dir: str, group: str) -> dict:
     return {"group": group, "items": items}
 
 
-def create_app(model_dir: str, device: str = "cuda", gallery_dir: Optional[str] = None) -> FastAPI:
-    """Create FastAPI application with model backend."""
-    global _backend, _app
+# ============================================================================
+# Inference request validation
+# ============================================================================
+
+# export_dir is expected to be a simple relative path; anything else is rejected below.
+_EXPORT_DIR_METACHAR_RE = re.compile(r"[;&|`$\n\r<>\x00]")
+
+# Hosts considered "local only" for the purposes of deciding whether an unauthenticated
+# backend is safe to start.
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "0:0:0:0:0:0:0:1"}
+
+
+def validate_export_dir(export_dir: Optional[str], gallery_dir: Optional[str]) -> Optional[str]:
+    """Validate a client-supplied export_dir before it reaches any inference/export code.
+
+    export_dir must be a simple relative path that resolves within the server's
+    configured gallery directory.
+
+    Raises:
+        ValueError: with a human-readable reason, if export_dir is rejected.
+    """
+    if not export_dir:
+        return export_dir
+
+    if _EXPORT_DIR_METACHAR_RE.search(export_dir):
+        raise ValueError("export_dir contains disallowed characters")
+
+    if os.path.isabs(export_dir) or export_dir.startswith("~"):
+        raise ValueError("export_dir must be a relative path")
+
+    if any(part == ".." for part in export_dir.replace("\\", "/").split("/")):
+        raise ValueError("export_dir must not contain '..' path traversal")
+
+    if not gallery_dir:
+        raise ValueError(
+            "export_dir is not permitted: no gallery directory is configured on this server"
+        )
+
+    gallery_root = os.path.realpath(gallery_dir)
+    resolved = os.path.realpath(export_dir)
+    if resolved != gallery_root and not resolved.startswith(gallery_root + os.sep):
+        raise ValueError(
+            "export_dir must resolve within the server's configured gallery directory"
+        )
+
+    return export_dir
+
+
+def create_app(
+    model_dir: str,
+    device: str = "cuda",
+    gallery_dir: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> FastAPI:
+    """Create FastAPI application with model backend.
+
+    Note: the non-loopback-without-authentication guard lives in start_server(), not
+    here. Callers that take this app and serve it themselves (e.g. via a custom
+    uvicorn.run() or by mounting it into a larger ASGI app) are responsible for their
+    own host-binding and authentication decisions.
+    """
+    global _backend, _app, _gallery_dir
 
     _backend = ModelBackend(model_dir, device)
     _app = FastAPI(
@@ -567,8 +649,17 @@ def create_app(model_dir: str, device: str = "cuda", gallery_dir: Optional[str] 
         version="1.0.0",
     )
 
-    # Store gallery directory globally for use in routes
+    # Module-level (not just closure-local) so background tasks can re-check it too.
     _gallery_dir = gallery_dir
+
+    # Optional shared-secret gate for task-submitting endpoints. Falls back to the
+    # DA3_BACKEND_API_KEY env var so the key never needs to appear in a command line.
+    _api_key = api_key or os.environ.get("DA3_BACKEND_API_KEY")
+
+    async def _require_api_key(x_api_key: Optional[str] = Header(default=None, alias="X-API-Key")):
+        """FastAPI dependency enforcing the API key when one is configured."""
+        if _api_key and not hmac.compare_digest(x_api_key or "", _api_key):
+            raise HTTPException(status_code=401, detail="Missing or invalid X-API-Key header")
 
     @_app.get("/", response_class=HTMLResponse)
     async def root():
@@ -1175,13 +1266,21 @@ def create_app(model_dir: str, device: str = "cuda", gallery_dir: Optional[str] 
 
         return status
 
-    @_app.post("/inference", response_model=InferenceResponse)
+    @_app.post(
+        "/inference", response_model=InferenceResponse, dependencies=[Depends(_require_api_key)]
+    )
     async def run_inference(request: InferenceRequest):
         """Submit inference task and return task ID."""
         global _running_task_id
 
         if _backend is None:
             raise HTTPException(status_code=500, detail="Backend not initialized")
+
+        if request.export_dir:
+            try:
+                validate_export_dir(request.export_dir, _gallery_dir)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
         # Generate unique task ID
         task_id = str(uuid.uuid4())
@@ -1374,9 +1473,20 @@ def start_server(
     host: str = "127.0.0.1",
     port: int = 8000,
     gallery_dir: Optional[str] = None,
+    api_key: Optional[str] = None,
+    allow_unauthenticated: bool = False,
 ):
     """Start the backend server."""
-    app = create_app(model_dir, device, gallery_dir)
+    api_key = api_key or os.environ.get("DA3_BACKEND_API_KEY")
+    auto_generated_key = False
+
+    if host not in _LOOPBACK_HOSTS and not api_key and not allow_unauthenticated:
+        # No key was configured for a host reachable beyond this machine: generate one
+        # for this run rather than requiring the operator to come up with one first.
+        api_key = secrets.token_urlsafe(32)
+        auto_generated_key = True
+
+    app = create_app(model_dir, device, gallery_dir, api_key=api_key)
 
     print("Starting Depth Anything 3 Backend...")
     print(f"Model directory: {model_dir}")
@@ -1387,6 +1497,17 @@ def start_server(
 
     if gallery_dir and os.path.exists(gallery_dir):
         print(f"Gallery: http://{host}:{port}/gallery/")
+
+    if auto_generated_key:
+        print("=" * 60)
+        print("No --api-key was set, so one was generated for this run:")
+        print(f"  X-API-Key: {api_key}")
+        print("Set DA3_BACKEND_API_KEY to this value wherever you submit jobs from")
+        print("(e.g. `da3 ... --use-backend`), or pass --api-key / set")
+        print("DA3_BACKEND_API_KEY before starting the backend for a key that stays")
+        print("the same across restarts. Use --allow-unauthenticated to skip this.")
+    elif api_key:
+        print("Authentication: X-API-Key header required for /inference")
 
     print("=" * 60)
     print("Backend is running! You can now:")
@@ -1412,6 +1533,27 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
     parser.add_argument("--gallery-dir", help="Gallery directory path (optional)")
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help="Require this API key (X-API-Key header) on inference requests. Falls back "
+        "to the DA3_BACKEND_API_KEY env var, or an auto-generated key when binding to a "
+        "non-loopback host.",
+    )
+    parser.add_argument(
+        "--allow-unauthenticated",
+        action="store_true",
+        help="Skip authentication entirely on a non-loopback host, instead of using an "
+        "auto-generated API key.",
+    )
 
     args = parser.parse_args()
-    start_server(args.model_dir, args.device, args.host, args.port, args.gallery_dir)
+    start_server(
+        args.model_dir,
+        args.device,
+        args.host,
+        args.port,
+        args.gallery_dir,
+        api_key=args.api_key,
+        allow_unauthenticated=args.allow_unauthenticated,
+    )

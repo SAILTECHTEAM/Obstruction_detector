@@ -13,11 +13,13 @@
 # limitations under the License.
 
 import os
+import subprocess
 import cv2
 import imageio
 import numpy as np
 from tqdm.auto import tqdm
 
+from depth_anything_3.utils.logger import logger
 from depth_anything_3.utils.parallel_utils import async_call
 from depth_anything_3.utils.pca_utils import PCARGBVisualizer
 
@@ -55,11 +57,19 @@ def export_to_feat_vis(
             save_path = os.path.join(out_dir, f"{k}/{idx:06d}.jpg")
             save = np.concatenate([img, feat_vis], axis=1)
             imageio.imwrite(save_path, save, quality=95)
-        cmd = (
-            "ffmpeg -loglevel error -hide_banner -y "
-            f"-framerate {fps} -start_number 0 "
-            f"-i {out_dir}/{k}/%06d.jpg "
-            f"-c:v libx264 -pix_fmt yuv420p "
-            f"{out_dir}/{k}.mp4"
-        )
-        os.system(cmd)
+        cmd = [
+            "ffmpeg",
+            "-loglevel", "error",
+            "-hide_banner",
+            "-y",
+            "-framerate", str(fps),
+            "-start_number", "0",
+            "-i", os.path.join(out_dir, k, "%06d.jpg"),
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            os.path.join(out_dir, f"{k}.mp4"),
+        ]
+        try:
+            subprocess.run(cmd, shell=False, check=False)
+        except OSError as e:
+            logger.warn(f"Failed to run ffmpeg for feature visualization export: {e}")

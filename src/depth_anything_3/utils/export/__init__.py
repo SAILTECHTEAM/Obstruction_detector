@@ -21,6 +21,22 @@ from .feat_vis import export_to_feat_vis
 from .glb import export_to_glb
 from .npz import export_to_mini_npz, export_to_npz
 
+# Canonical set of export formats this dispatcher understands. Treat this as the
+# server-trusted enum for any request-facing validation (e.g. the HTTP backend) instead
+# of letting a client-supplied export_format string reach the dispatcher unchecked.
+SUPPORTED_EXPORT_FORMATS = frozenset(
+    {
+        "glb",
+        "mini_npz",
+        "npz",
+        "feat_vis",
+        "depth_vis",
+        "gs_ply",
+        "gs_video",
+        "colmap",
+    }
+)
+
 
 def export(
     prediction: Prediction,
