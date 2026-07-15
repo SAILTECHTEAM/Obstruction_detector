@@ -79,7 +79,7 @@ class EventHandlers:
         Returns:
             Status message
         """
-        if not target_dir or target_dir == "None" or not os.path.isdir(target_dir):
+        if not self.file_handler.is_valid_session_dir(target_dir):
             return "No reconstruction available. Please run 'Reconstruct' first."
 
         if processed_data is None:
@@ -174,7 +174,7 @@ class EventHandlers:
         Returns:
             Tuple of reconstruction results
         """
-        if not os.path.isdir(target_dir) or target_dir == "None":
+        if not self.file_handler.is_valid_session_dir(target_dir):
             return (
                 None,
                 "No valid target directory found. Please upload first.",
@@ -284,7 +284,7 @@ class EventHandlers:
         Returns:
             Tuple of (glb_file, log_message)
         """
-        if not target_dir or target_dir == "None" or not os.path.isdir(target_dir):
+        if not self.file_handler.is_valid_session_dir(target_dir):
             return (
                 gr.update(),
                 "No reconstruction available. Please click the Reconstruct button first.",
@@ -318,8 +318,11 @@ class EventHandlers:
             )
             return gr.update(), error_message
 
-        loaded = np.load(predictions_path, allow_pickle=True)
-        predictions = {key: loaded[key] for key in loaded.keys()}  # noqa: F841
+        try:
+            loaded = np.load(predictions_path, allow_pickle=False)
+            predictions = {key: loaded[key] for key in loaded.keys()}  # noqa: F841
+        except Exception as e:
+            return gr.update(), f"Cached results could not be read: {e}"
 
         return (
             glbfile,
@@ -384,12 +387,12 @@ class EventHandlers:
         gs_video_visible = False
         gs_info_visible = True
 
-        if target_dir and target_dir != "None":
+        if self.file_handler.is_valid_session_dir(target_dir):
             predictions_path = os.path.join(target_dir, "predictions.npz")
             if os.path.exists(predictions_path):
                 try:
                     # Load predictions from cache
-                    loaded = np.load(predictions_path, allow_pickle=True)
+                    loaded = np.load(predictions_path, allow_pickle=False)
                     predictions = {key: loaded[key] for key in loaded.keys()}
 
                     # Reconstruct processed_data structure

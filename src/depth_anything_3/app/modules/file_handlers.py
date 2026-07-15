@@ -30,6 +30,29 @@ from pillow_heif import register_heif_opener
 register_heif_opener()
 
 
+ALLOWED_IMAGE_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".bmp",
+    ".tiff",
+    ".tif",
+    ".webp",
+    ".heic",
+    ".heif",
+}
+
+
+def _looks_like_image(file_path: str) -> bool:
+    """Best-effort check that a file is actually a decodable image, not just named like one."""
+    try:
+        with Image.open(file_path) as img:
+            img.verify()
+        return True
+    except Exception:
+        return False
+
+
 class FileHandler:
     """
     Handles file uploads and processing for the Gradio app.
@@ -37,6 +60,30 @@ class FileHandler:
 
     def __init__(self):
         """Initialize the file handler."""
+
+    def is_valid_session_dir(self, target_dir: Optional[str]) -> bool:
+        """Check that target_dir is a session/example directory this handler itself
+        creates under the configured workspace, rather than an arbitrary path."""
+        if not target_dir or target_dir == "None":
+            return False
+
+        try:
+            workspace_dir = os.environ.get("DA3_WORKSPACE_DIR", "gradio_workspace")
+            input_images_dir = os.path.realpath(os.path.join(workspace_dir, "input_images"))
+            real_target = os.path.realpath(target_dir)
+
+            if real_target != input_images_dir and not real_target.startswith(
+                input_images_dir + os.sep
+            ):
+                return False
+
+            rel = os.path.relpath(real_target, input_images_dir)
+            if os.sep in rel or not (rel.startswith("session_") or rel.startswith("example_")):
+                return False
+
+            return os.path.isdir(real_target)
+        except (OSError, ValueError):
+            return False
 
     def handle_uploads(
         self,
@@ -117,8 +164,12 @@ class FileHandler:
             else:
                 file_path = file_data
 
-            # Check if the file is a HEIC image
             file_ext = os.path.splitext(file_path)[1].lower()
+            if file_ext not in ALLOWED_IMAGE_EXTENSIONS or not _looks_like_image(file_path):
+                print(f"Skipping non-image upload: {os.path.basename(file_path)}")
+                continue
+
+            # Check if the file is a HEIC image
             if file_ext in [".heic", ".heif"]:
                 # Convert HEIC to JPEG for better gallery compatibility
                 try:
