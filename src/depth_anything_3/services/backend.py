@@ -19,6 +19,7 @@ Provides HTTP API for model inference with persistent model loading.
 """
 
 import hmac
+import html
 import os
 import posixpath
 import re
@@ -109,6 +110,38 @@ class TaskStatus(BaseModel):
     export_format: Optional[str] = None  # Export format
     process_res_method: Optional[str] = None  # Processing resolution method
     video_path: Optional[str] = None  # Source video path
+
+
+def _render_task_card(task: "TaskStatus", css_class: str) -> str:
+    """Render a single task as an HTML fragment for the dashboard.
+
+    Every field is HTML-escaped: task fields originate from a client request and
+    are rendered on a page other users may view.
+    """
+    e = html.escape
+
+    video_row = ""
+    if task.video_path:
+        video_row = f"<br><small>Video: {e(task.video_path)}</small>"
+
+    return f"""
+                <div class="task-item {e(css_class)}">
+                    <div class="task-header">
+                        <span class="task-id">{e(task.task_id)}</span>
+                        <span class="task-status status-{e(task.status)}">{e(task.status)}</span>
+                    </div>
+                    <div class="task-message">{e(task.message)}</div>
+                    <div class="task-params">
+                        <small>
+                            Images: {e(str(task.num_images)) if task.num_images is not None else 'N/A'} |
+                            Format: {e(task.export_format) if task.export_format else 'N/A'} |
+                            Method: {e(task.process_res_method) if task.process_res_method else 'N/A'} |
+                            Export Dir: {e(task.export_dir) if task.export_dir else 'N/A'}
+                        </small>
+                        {video_row}
+                    </div>
+                </div>
+                """
 
 
 class ModelBackend:
@@ -945,53 +978,17 @@ def create_app(
         ]
 
         # Generate task HTML
-        active_tasks_html = ""
         if active_tasks:
-            for task in active_tasks:
-                task_details = f"""
-                <div class="task-item running">
-                    <div class="task-header">
-                        <span class="task-id">{task.task_id}</span>
-                        <span class="task-status status-{task.status}">{task.status}</span>
-                    </div>
-                    <div class="task-message">{task.message}</div>
-                    <div class="task-params">
-                        <small>
-                            Images: {task.num_images or 'N/A'} |
-                            Format: {task.export_format or 'N/A'} |
-                            Method: {task.process_res_method or 'N/A'} |
-                            Export Dir: {task.export_dir or 'N/A'}
-                        </small>
-                        {f'<br><small>Video: {task.video_path}</small>' if task.video_path else ''}
-                    </div>
-                </div>
-                """
-                active_tasks_html += task_details
+            active_tasks_html = "".join(
+                _render_task_card(task, "running") for task in active_tasks
+            )
         else:
             active_tasks_html = "<p>No active tasks</p>"
 
-        completed_tasks_html = ""
         if completed_tasks:
-            for task in completed_tasks[-10:]:
-                task_details = f"""
-                <div class="task-item completed">
-                    <div class="task-header">
-                        <span class="task-id">{task.task_id}</span>
-                        <span class="task-status status-{task.status}">{task.status}</span>
-                    </div>
-                    <div class="task-message">{task.message}</div>
-                    <div class="task-params">
-                        <small>
-                            Images: {task.num_images or 'N/A'} |
-                            Format: {task.export_format or 'N/A'} |
-                            Method: {task.process_res_method or 'N/A'} |
-                            Export Dir: {task.export_dir or 'N/A'}
-                        </small>
-                        {f'<br><small>Video: {task.video_path}</small>' if task.video_path else ''}
-                    </div>
-                </div>
-                """
-                completed_tasks_html += task_details
+            completed_tasks_html = "".join(
+                _render_task_card(task, "completed") for task in completed_tasks[-10:]
+            )
         else:
             completed_tasks_html = "<p>No completed tasks</p>"
 
@@ -1167,11 +1164,11 @@ def create_app(
                 </div>
                 <div class="status-item">
                     <span>Model Directory:</span>
-                    <span class="status-value">{status['model_dir']}</span>
+                    <span class="status-value">{html.escape(str(status['model_dir']))}</span>
                 </div>
                 <div class="status-item">
                     <span>Device:</span>
-                    <span class="status-value">{status['device']}</span>
+                    <span class="status-value">{html.escape(str(status['device']))}</span>
                 </div>
                 <div class="status-item">
                     <span>Load Time:</span>
