@@ -8,6 +8,7 @@ build/
 dist/
 *.egg-info/
 .gradio/
+.tmp/
 
 # Test/coverage
 .coverage
