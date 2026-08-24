@@ -36,15 +36,14 @@ dependencies = [
     "typer>=0.9.0",
     "uvicorn",
     "pre-commit>=4.6.2",
+    "matplotlib>=3.11.1",
+    "ultralytics>=8.4.127",
 ]
 
 [project.optional-dependencies]
 app = ["gradio>=5", "pillow>=9.0"]
 all = ["depth-anything-3[app]"]
-detection = [
-    "matplotlib",
-    "ultralytics",
-]
+detection = []
 
 
 [project.scripts]
