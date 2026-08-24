@@ -13,8 +13,8 @@ authors = [{ name = "Your Name" }]
 
 dependencies = [
     "trimesh",
-    "torch>=2",
-    "torchvision",
+    "torch==2.10.0",
+    "torchvision==0.25.0",
     "einops",
     "huggingface-hub",
     "imageio",
@@ -49,6 +49,12 @@ detection = [
 
 [project.scripts]
 da3 = "depth_anything_3.cli:app"
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
 
 [project.urls]
 Homepage = "https://github.com/ByteDance-Seed/Depth-Anything-3"
@@ -92,6 +98,11 @@ sections = ["FUTURE","STDLIB","THIRDPARTY","FIRSTPARTY","LOCALFOLDER"]
 skip_gitignore = true
 line_length = 99
 no_lines_before="THIRDPARTY"
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+xformers = { index = "pytorch-cu128" }
 
 [dependency-groups]
 dev = [
