@@ -7,44 +7,44 @@ name = "depth-anything-3"
 version = "0.0.0"
 description = "Depth Anything 3"
 readme = "README.md"
-requires-python = ">=3.9, <=3.13"
+requires-python = ">=3.11,<3.12"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Your Name" }]
 
 dependencies = [
-    "pre-commit",
     "trimesh",
     "torch>=2",
     "torchvision",
     "einops",
-    "huggingface_hub",
+    "huggingface-hub",
     "imageio",
     "numpy<2",
     "opencv-python",
     "xformers",
     "open3d",
     "fastapi",
-    "uvicorn",
     "requests",
-    "typer",
     "pillow",
     "omegaconf",
     "evo",
     "e3nn",
-    "moviepy",
     "plyfile",
-    "pillow_heif",
+    "pillow-heif",
     "safetensors",
-    "uvicorn",
+    "pycolmap",
     "moviepy==1.0.3",
     "typer>=0.9.0",
-    "pycolmap",
+    "uvicorn",
+    "pre-commit>=4.6.2",
 ]
 
 [project.optional-dependencies]
-app = ["gradio>=5", "pillow>=9.0"] # requires that python3>=3.10
-gs = ["gsplat @ git+https://github.com/nerfstudio-project/gsplat.git@0b4dddf04cb687367602c01196913cde6a743d70"]
-all = ["depth-anything-3[app,gs]"]
+app = ["gradio>=5", "pillow>=9.0"]
+all = ["depth-anything-3[app]"]
+detection = [
+    "matplotlib",
+    "ultralytics",
+]
 
 
 [project.scripts]
@@ -92,3 +92,8 @@ sections = ["FUTURE","STDLIB","THIRDPARTY","FIRSTPARTY","LOCALFOLDER"]
 skip_gitignore = true
 line_length = 99
 no_lines_before="THIRDPARTY"
+
+[dependency-groups]
+dev = [
+    "pre-commit",
+]

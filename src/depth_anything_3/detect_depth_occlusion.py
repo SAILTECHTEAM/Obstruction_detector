@@ -17,6 +17,7 @@ import numpy as np
 import torch
 
 from depth_anything_3.api import DepthAnything3
+from depth_anything_3.person_segmentation import UltralyticsPersonSegmenter
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -45,6 +46,63 @@ def load_depth(path: Path) -> np.ndarray:
     if depth.ndim != 2:
         raise ValueError(f"Expected one HxW depth map in {path}, got {depth.shape}")
     return depth
+
+
+def load_yolo_seg_class_mask(
+    txt_path: Path | None,
+    target_shape: tuple[int, int],
+    class_id: int,
+) -> np.ndarray:
+    """Rasterize one class from a normalized YOLO segmentation TXT file."""
+    height, width = target_shape
+    mask = np.zeros((height, width), dtype=np.uint8)
+    if txt_path is None:
+        return mask
+    if not txt_path.is_file():
+        raise FileNotFoundError(f"YOLO segmentation TXT not found: {txt_path}")
+
+    for line in txt_path.read_text(encoding="utf-8").splitlines():
+        values = line.strip().split()
+        if len(values) < 7 or int(float(values[0])) != class_id:
+            continue
+
+        coordinates = [float(value) for value in values[1:]]
+        # With save_conf enabled, confidence is the final unpaired value.
+        if len(coordinates) % 2 == 1:
+            coordinates = coordinates[:-1]
+        if len(coordinates) < 6:
+            continue
+
+        polygon = np.asarray(coordinates, dtype=np.float32).reshape(-1, 2)
+        polygon[:, 0] = np.clip(polygon[:, 0] * width, 0, width - 1)
+        polygon[:, 1] = np.clip(polygon[:, 1] * height, 0, height - 1)
+        cv2.fillPoly(mask, [np.rint(polygon).astype(np.int32)], 255)
+    return mask
+
+
+def dilate_mask(mask: np.ndarray, radius: int) -> np.ndarray:
+    if radius <= 0:
+        return mask.copy()
+    size = radius * 2 + 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
+    return cv2.dilate(mask, kernel, iterations=1)
+
+
+def mask_region(mask: np.ndarray, area_ratio: float) -> dict[str, int | float]:
+    """Return one bounding region enclosing all nonzero pixels in a mask."""
+    points = cv2.findNonZero(mask)
+    if points is None:
+        raise ValueError("Cannot create a region from an empty mask")
+    x, y, width, height = cv2.boundingRect(points)
+    return {
+        "x": int(x),
+        "y": int(y),
+        "width": int(width),
+        "height": int(height),
+        "area_pixels": int(np.count_nonzero(mask)),
+        "area_ratio": float(area_ratio),
+        "is_person": 1,
+    }
 
 
 def predict_depths(
@@ -153,7 +211,15 @@ def draw_overlay(
         x2 = round((int(region["x"]) + int(region["width"])) * scale_x)
         y2 = round((int(region["y"]) + int(region["height"])) * scale_y)
         cv2.rectangle(output, (x1, y1), (x2, y2), (0, 0, 255), 5)
-        label = f"Occlusion {index}: {float(region['area_ratio']) * 100:.1f}%"
+        if int(region.get("is_person", 0)):
+            label = f"Person occlusion: {float(region['area_ratio']) * 100:.1f}%"
+        elif "depth_adjusted_area_ratio" in region:
+            label = (
+                f"Occlusion {index}: raw {float(region['area_ratio']) * 100:.1f}% "
+                f"adjusted {float(region['depth_adjusted_area_ratio']) * 100:.1f}%"
+            )
+        else:
+            label = f"Occlusion {index}: {float(region['area_ratio']) * 100:.1f}%"
         text_y = max(35, y1 - 12)
         cv2.putText(
             output,
@@ -253,6 +319,44 @@ def parse_args() -> argparse.Namespace:
         help="Existing occluded results.npz; must be used with --normal-depth",
     )
     parser.add_argument(
+        "--normal-yolo-txt",
+        type=Path,
+        help="YOLO segmentation TXT for the normal image",
+    )
+    parser.add_argument(
+        "--occluded-yolo-txt",
+        type=Path,
+        help="YOLO segmentation TXT for the current/occluded image",
+    )
+    parser.add_argument(
+        "--yolo-model",
+        help="Ultralytics YOLO segmentation weights; runs segmentation directly",
+    )
+    parser.add_argument("--yolo-confidence", type=float, default=0.25)
+    parser.add_argument(
+        "--yolo-device",
+        help="Ultralytics device, for example cuda:0 or cpu (default: auto)",
+    )
+    parser.add_argument("--yolo-image-size", type=int, default=640)
+    parser.add_argument(
+        "--person-class-id",
+        type=int,
+        default=0,
+        help="Person class index in the YOLO segmentation model",
+    )
+    parser.add_argument(
+        "--person-alert-ratio",
+        type=float,
+        default=1.0 / 3.0,
+        help="Alert only when current-frame person masks cover this image fraction",
+    )
+    parser.add_argument(
+        "--person-dilate",
+        type=int,
+        default=7,
+        help="Depth-map pixels added around ignored person masks",
+    )
+    parser.add_argument(
         "--model-dir", default="depth-anything/DA3METRIC-LARGE", help="DA3 model"
     )
     parser.add_argument("--device", default="cuda", help="Inference device")
@@ -271,7 +375,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--blur-size", type=int, default=5)
     parser.add_argument("--open-size", type=int, default=3)
-    parser.add_argument("--close-size", type=int, default=15)
+    parser.add_argument("--close-size", type=int, default=7)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     return parser.parse_args()
 
@@ -294,6 +398,12 @@ def main() -> None:
         raise ValueError("--min-area-ratio must be between 0 and 1")
     if args.depth_threshold <= 0:
         raise ValueError("--depth-threshold must be positive")
+    if not 0 < args.person_alert_ratio <= 1:
+        raise ValueError("--person-alert-ratio must be in (0, 1]")
+    if args.person_dilate < 0:
+        raise ValueError("--person-dilate must be nonnegative")
+    if args.yolo_model and (args.normal_yolo_txt or args.occluded_yolo_txt):
+        raise ValueError("Use either --yolo-model or YOLO TXT inputs, not both")
     for name in ("blur_size", "open_size", "close_size"):
         validate_odd_size(name, int(getattr(args, name)))
 
@@ -334,33 +444,91 @@ def main() -> None:
     candidate = valid & (filtered_difference <= -args.depth_threshold)
     mask_u8 = clean_mask(candidate, args.open_size, args.close_size)
     mask_u8[~valid] = 0
-    regions, large_mask_u8 = find_large_regions(mask_u8, args.min_area_ratio)
-    detected = bool(regions)
 
-    overlay_bgr = draw_overlay(occluded_bgr, large_mask_u8, regions)
+    if args.yolo_model:
+        person_segmenter = UltralyticsPersonSegmenter(
+            args.yolo_model,
+            person_class_id=args.person_class_id,
+            confidence=args.yolo_confidence,
+            device=args.yolo_device,
+            image_size=args.yolo_image_size,
+        )
+        normal_person_mask = person_segmenter.predict_mask(
+            normal_bgr, normal_depth.shape
+        )
+        current_person_mask = person_segmenter.predict_mask(
+            occluded_bgr, normal_depth.shape
+        )
+    else:
+        normal_person_mask = load_yolo_seg_class_mask(
+            args.normal_yolo_txt.resolve() if args.normal_yolo_txt else None,
+            normal_depth.shape,
+            args.person_class_id,
+        )
+        current_person_mask = load_yolo_seg_class_mask(
+            args.occluded_yolo_txt.resolve() if args.occluded_yolo_txt else None,
+            normal_depth.shape,
+            args.person_class_id,
+        )
+    # Compute the one-third rule from the raw current-frame segmentation. Dilation
+    # is only for cleaning depth artifacts and must not inflate person coverage.
+    person_area_ratio = float(
+        np.count_nonzero(current_person_mask) / current_person_mask.size
+    )
+    person_occlusion = person_area_ratio >= args.person_alert_ratio
+
+    all_person_mask = cv2.bitwise_or(normal_person_mask, current_person_mask)
+    ignored_person_mask = dilate_mask(all_person_mask, args.person_dilate)
+    # People below the alert rule must never contribute to depth-change regions.
+    # Large people are also removed here and handled by the explicit area rule.
+    mask_u8[ignored_person_mask > 0] = 0
+
+    regions, large_mask_u8 = find_large_regions(mask_u8, args.min_area_ratio)
+    depth_occlusion = bool(regions)
+    detected = depth_occlusion or person_occlusion
+
+    display_regions = list(regions)
+    final_mask_u8 = large_mask_u8.copy()
+    if person_occlusion:
+        final_mask_u8 = cv2.bitwise_or(final_mask_u8, current_person_mask)
+        display_regions.append(mask_region(current_person_mask, person_area_ratio))
+
+    overlay_bgr = draw_overlay(occluded_bgr, final_mask_u8, display_regions)
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     np.save(output_dir / "depth_difference.npy", difference)
-    cv2.imwrite(str(output_dir / "occlusion_mask.png"), large_mask_u8)
+    cv2.imwrite(str(output_dir / "occlusion_mask.png"), final_mask_u8)
+    cv2.imwrite(str(output_dir / "ignored_person_mask.png"), ignored_person_mask)
     cv2.imwrite(str(output_dir / "occlusion_overlay.png"), overlay_bgr)
     save_overview(
         normal_depth,
         occluded_depth,
         difference,
-        large_mask_u8,
+        final_mask_u8,
         overlay_bgr,
         output_dir / "overview.png",
     )
 
     report = {
         "large_occlusion_detected": detected,
-        "decision": "OCCLUSION" if detected else "NO_LARGE_OCCLUSION",
+        "decision": (
+            "PERSON_OCCLUSION"
+            if person_occlusion
+            else "DEPTH_OCCLUSION"
+            if depth_occlusion
+            else "NO_LARGE_OCCLUSION"
+        ),
         "normal_image": str(normal_image_path),
         "occluded_image": str(occluded_image_path),
         "depth_shape": list(normal_depth.shape),
         "depth_threshold": args.depth_threshold,
         "minimum_area_ratio": args.min_area_ratio,
+        "person_class_id": args.person_class_id,
+        "person_area_ratio": person_area_ratio,
+        "person_alert_ratio": args.person_alert_ratio,
+        "person_occlusion_detected": person_occlusion,
+        "depth_occlusion_detected": depth_occlusion,
         "candidate_area_ratio": float(np.count_nonzero(mask_u8) / mask_u8.size),
         "detected_area_ratio": float(
             np.count_nonzero(large_mask_u8) / large_mask_u8.size
@@ -376,6 +544,11 @@ def main() -> None:
 
     print("\n=== Depth occlusion detection ===")
     print(f"Decision: {report['decision']}")
+    print(
+        "Person coverage: "
+        f"{person_area_ratio * 100:.2f}% / "
+        f"{args.person_alert_ratio * 100:.2f}% threshold"
+    )
     print(f"Candidate area: {report['candidate_area_ratio'] * 100:.2f}%")
     print(f"Large regions: {len(regions)}")
     if regions:

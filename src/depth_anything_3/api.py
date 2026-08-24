@@ -155,6 +155,7 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
         feat_vis_fps: int = 15,
         # Other export parameters, e.g., gs_ply, gs_video
         export_kwargs: Optional[dict] = {},
+        include_processed_images: bool = True,
     ) -> Prediction:
         """
         Run inference on input images.
@@ -182,6 +183,8 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
             show_cameras: [GLB] Show camera wireframes in the exported scene (default: True)
             feat_vis_fps: [FEAT_VIS] Frame rate for output video (default: 15)
             export_kwargs: additional arguments to export functions.
+            include_processed_images: Add denormalized input images to the prediction.
+                Disable this for streaming inference when no visualization/export needs them.
 
         Returns:
             Prediction object containing depth maps and camera parameters
@@ -218,8 +221,10 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
             extrinsics, intrinsics, prediction, align_to_input_ext_scale
         )
 
-        # Add processed images for visualization
-        prediction = self._add_processed_images(prediction, imgs_cpu)
+        # Add processed images only when visualization/export needs them. Streaming
+        # callers can skip this extra per-frame CPU allocation.
+        if include_processed_images:
+            prediction = self._add_processed_images(prediction, imgs_cpu)
 
         # Export if requested
         if export_dir is not None:
@@ -402,8 +407,8 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
         processed_imgs = imgs_cpu.permute(0, 2, 3, 1).cpu().numpy()  # (N, H, W, 3)
 
         # Denormalize from ImageNet normalization
-        mean = np.array([0.485, 0.456, 0.406])
-        std = np.array([0.229, 0.224, 0.225])
+        mean = np.array([0.485, 0.456, 0.406], dtype=processed_imgs.dtype)
+        std = np.array([0.229, 0.224, 0.225], dtype=processed_imgs.dtype)
         processed_imgs = processed_imgs * std + mean
         processed_imgs = np.clip(processed_imgs, 0, 1)
         processed_imgs = (processed_imgs * 255).astype(np.uint8)
