@@ -103,7 +103,4 @@ torch = { index = "pytorch-cu128" }
 torchvision = { index = "pytorch-cu128" }
 xformers = { index = "pytorch-cu128" }
 
-[dependency-groups]
-dev = [
-    "pre-commit",
-]
+
