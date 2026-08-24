@@ -35,3 +35,21 @@ src/debug_main.py
 src/outputs
 temp*.png
 /outputs
+
+# Virtual environments and dependency caches
+/.venv/
+/.uv-cache/
+/.cache/
+
+# Tool caches
+/.mypy_cache/
+/.ruff_cache/
+
+# Runtime outputs
+/runs/
+
+# IDE / OS
+/.vscode/
+/.idea/
+Thumbs.db
+Desktop.ini
