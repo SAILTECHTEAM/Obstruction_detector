@@ -1,328 +1,352 @@
-<div align="center">
-<h1 style="border-bottom: none; margin-bottom: 0px ">Depth Anything 3: Recovering the Visual Space from Any Views</h1>
-<!-- <h2 style="border-top: none; margin-top: 3px;">Recovering the Visual Space from Any Views</h2> -->
+# 基於 Depth Anything 3 的影片遮擋偵測
 
+本專案基於 [Depth Anything 3（DA3）](https://github.com/ByteDance-Seed/Depth-Anything-3) 開發，用於判斷固定機位畫面中是否出現大面積的新遮擋物。系統將正常場景參考影像與影片畫格逐幀比較，並結合：
 
-[**Haotong Lin**](https://haotongl.github.io/)<sup>&ast;</sup> · [**Sili Chen**](https://github.com/SiliChen321)<sup>&ast;</sup> · [**Jun Hao Liew**](https://liewjunhao.github.io/)<sup>&ast;</sup> · [**Donny Y. Chen**](https://donydchen.github.io)<sup>&ast;</sup> · [**Zhenyu Li**](https://zhyever.github.io/) · [**Guang Shi**](https://scholar.google.com/citations?user=MjXxWbUAAAAJ&hl=en) · [**Jiashi Feng**](https://scholar.google.com.sg/citations?user=Q8iay0gAAAAJ&hl=en)
-<br>
-[**Bingyi Kang**](https://bingyikang.com/)<sup>&ast;&dagger;</sup>
+- **DA3Metric-Large**：估算具有真實尺度的單目深度；
+- **YOLO 實例分割**：獨立處理畫面中的人員區域；
+- **連通區域與面積判定**：過濾小範圍雜訊並輸出遮擋區域；
+- **深度正規化面積**：依照物體距離動態調整面積門檻，降低透視造成的影響。
 
-&dagger;project lead&emsp;&ast;Equal Contribution
+目前專案是離線影片分析程式，不是 Web 服務。輸入為一張正常參考影像與一段待偵測影片；輸出包含標註後的影片、逐幀偵測結果及摘要報告。
 
-<a href="https://arxiv.org/abs/2511.10647"><img src='https://img.shields.io/badge/arXiv-Depth Anything 3-red' alt='Paper PDF'></a>
-<a href='https://depth-anything-3.github.io'><img src='https://img.shields.io/badge/Project_Page-Depth Anything 3-green' alt='Project Page'></a>
-<a href='https://huggingface.co/spaces/depth-anything/Depth-Anything-3'><img src='https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Demo-blue'></a>
-<!-- <a href='https://huggingface.co/datasets/depth-anything/VGB'><img src='https://img.shields.io/badge/Benchmark-VisGeo-yellow' alt='Benchmark'></a> -->
-<!-- <a href='https://huggingface.co/datasets/depth-anything/data'><img src='https://img.shields.io/badge/Benchmark-xxx-yellow' alt='Data'></a> -->
+## 偵測邏輯
 
-</div>
+程式會對每個待分析畫格執行以下步驟：
 
-This work presents **Depth Anything 3 (DA3)**, a model that predicts spatially consistent geometry from
-arbitrary visual inputs, with or without known camera poses.
-In pursuit of minimal modeling, DA3 yields two key insights:
-- 💎 A **single plain transformer** (e.g., vanilla DINO encoder) is sufficient as a backbone without architectural specialization,
-- ✨ A singular **depth-ray representation** obviates the need for complex multi-task learning.
+1. 分別推論參考影像與目前畫格的 metric depth；
+2. 計算「目前深度 - 參考深度」，深度明顯減少的像素視為新遮擋候選；
+3. 使用形態學處理清除雜訊，並擷取連通區域；
+4. 使用 YOLO 分割人員，人員區域不納入一般深度遮擋統計；
+5. 人員覆蓋比例達到門檻時輸出 `PERSON_OCCLUSION`；
+6. 非人員的深度變化區域達到面積門檻時輸出 `DEPTH_OCCLUSION`；
+7. 否則輸出 `NO_LARGE_OCCLUSION`。
 
-🏆 DA3 significantly outperforms
-[DA2](https://github.com/DepthAnything/Depth-Anything-V2) for monocular depth estimation,
-and [VGGT](https://github.com/facebookresearch/vggt) for multi-view depth estimation and pose estimation.
-All models are trained exclusively on **public academic datasets**.
+建議使用 `detect_video_occlusion_depth_ratio`。此模式會依照區域深度修正面積門檻，比固定像素面積更適合遠近尺度差異明顯的監控畫面。
 
-<!-- <p align="center">
-  <img src="assets/images/da3_teaser.png" alt="Depth Anything 3" width="100%">
-</p> -->
-<p align="center">
-  <img src="assets/images/demo320-2.gif" alt="Depth Anything 3 - Left" width="70%">
-</p>
-<p align="center">
-  <img src="assets/images/da3_radar.png" alt="Depth Anything 3" width="100%">
-</p>
+## 專案結構
 
+```text
+depth_anythingv3/
+├── assets/
+│   ├── images/normal.png        # 範例正常參考影像
+│   └── videos/input.mp4         # 範例輸入影片
+├── models/
+│   └── yolo11n-seg.pt           # 專案內附的 YOLO 人員分割權重
+├── outputs/                     # 執行後自動產生，不提交至 Git
+├── src/depth_anything_3/
+│   ├── detect_depth_occlusion.py
+│   ├── detect_video_occlusion.py
+│   ├── detect_video_occlusion_depth_ratio.py
+│   └── person_segmentation.py
+├── pyproject.toml
+└── uv.lock
+```
 
-## 📰 News
-- **11-12-2025:** 🚀 New models and [**DA3-Streaming**](da3_streaming/README.md) released! Handle ultra-long video sequence inference with less than 12GB GPU memory via sliding-window streaming inference. Special thanks to [Kai Deng](https://github.com/DengKaiCQ) for his contribution to DA3-Streaming!
-- **08-12-2025:** 📊 [Benchmark evaluation pipeline](docs/BENCHMARK.md) released! Evaluate pose estimation & 3D reconstruction on 5 datasets.
-- **30-11-2025:** Add [`use_ray_pose`](#use-ray-pose) and [`ref_view_strategy`](docs/funcs/ref_view_strategy.md) (reference view selection for multi-view inputs).   
-- **25-11-2025:** Add [Awesome DA3 Projects](#-awesome-da3-projects), a community-driven section featuring DA3-based applications.
-- **14-11-2025:** Paper, project page, code and models are all released.
+## Linux 環境需求
 
-## ✨ Highlights
+以下指令以 Ubuntu/Debian 為例。
 
-### 🏆 Model Zoo
-We release three series of models, each tailored for specific use cases in visual geometry.
+- 64 位元 Linux；
+- Python **3.11**；
+- 建議使用 NVIDIA GPU；
+- NVIDIA 驅動程式需支援專案鎖定的 PyTorch CUDA 12.8 執行環境；
+- 可連線至 PyPI 與 Hugging Face，或事先準備本機 DA3 模型目錄；
+- 請預留足夠空間存放 Python 環境、DA3 權重與輸出影片。
 
-- 🌟 **DA3 Main Series** (`DA3-Giant`, `DA3-Large`, `DA3-Base`, `DA3-Small`) These are our flagship foundation models, trained with a unified depth-ray representation. By varying the input configuration, a single model can perform a wide range of tasks:
-  + 🌊 **Monocular Depth Estimation**: Predicts a depth map from a single RGB image.
-  + 🌊 **Multi-View Depth Estimation**: Generates consistent depth maps from multiple images for high-quality fusion.
-  + 🎯 **Pose-Conditioned Depth Estimation**: Achieves superior depth consistency when camera poses are provided as input.
-  + 📷 **Camera Pose Estimation**:  Estimates camera extrinsics and intrinsics from one or more images.
-  + 🟡 **3D Gaussian Estimation**: Directly predicts 3D Gaussians, enabling high-fidelity novel view synthesis.
+CPU 也可執行：將 `--device` 與 `--yolo-device` 都設為 `cpu`，但 DA3 逐幀影片推論速度會很慢。
 
-- 📐 **DA3 Metric Series** (`DA3Metric-Large`) A specialized model fine-tuned for metric depth estimation in monocular settings, ideal for applications requiring real-world scale.
-
-- 🔍 **DA3 Monocular Series** (`DA3Mono-Large`). A dedicated model for high-quality relative monocular depth estimation. Unlike disparity-based models (e.g.,  [Depth Anything 2](https://github.com/DepthAnything/Depth-Anything-V2)), it directly predicts depth, resulting in superior geometric accuracy.
-
-🔗 Leveraging these available models, we developed a **nested series** (`DA3Nested-Giant-Large`). This series combines a any-view giant model with a metric model to reconstruct visual geometry at a real-world metric scale.
-
-### 🛠️ Codebase Features
-Our repository is designed to be a powerful and user-friendly toolkit for both practical application and future research.
-- 🎨 **Interactive Web UI & Gallery**: Visualize model outputs and compare results with an easy-to-use Gradio-based web interface.
-- ⚡ **Flexible Command-Line Interface (CLI)**: Powerful and scriptable CLI for batch processing and integration into custom workflows.
-- 💾 **Multiple Export Formats**: Save your results in various formats, including `glb`, `npz`, depth images, `ply`, 3DGS videos, etc, to seamlessly connect with other tools.
-- 🔧 **Extensible and Modular Design**: The codebase is structured to facilitate future research and the integration of new models or functionalities.
-
-
-<!-- ### 🎯 Visual Geometry Benchmark
-We introduce a new benchmark to rigorously evaluate geometry prediction models on three key tasks: pose estimation, 3D reconstruction, and visual rendering (novel view synthesis) quality.
-
-- 🔄 **Broad Model Compatibility**: Our benchmark is designed to be versatile, supporting the evaluation of various models, including both monocular and multi-view depth estimation approaches.
-- 🔬 **Robust Evaluation Pipeline**: We provide a standardized pipeline featuring RANSAC-based pose alignment, TSDF fusion for dense reconstruction, and a principled view selection strategy for novel view synthesis.
-- 📊 **Standardized Metrics**: Performance is measured using established metrics: AUC for pose accuracy, F1-score and Chamfer Distance for reconstruction, and PSNR/SSIM/LPIPS for rendering quality.
-- 🌍 **Diverse and Challenging Datasets**: The benchmark spans a wide range of scenes from datasets like HiRoom, ETH3D, DTU, 7Scenes, ScanNet++, DL3DV, Tanks and Temples, and MegaDepth. -->
-
-
-## 🚀 Quick Start
-
-### 📦 Installation
+先安裝系統相依套件：
 
 ```bash
-pip install xformers torch\>=2 torchvision
-pip install -e . # Basic
-pip install --no-build-isolation git+https://github.com/nerfstudio-project/gsplat.git@0b4dddf04cb687367602c01196913cde6a743d70 # for gaussian head
-pip install -e ".[app]" # Gradio, python>=3.10
-pip install -e ".[all]" # ALL
+sudo apt update
+sudo apt install -y git curl ffmpeg libgl1 libglib2.0-0
 ```
 
-For detailed model information, please refer to the [Model Cards](#-model-cards) section below.
-
-### 💻 Basic Usage
-
-```python
-import glob, os, torch
-from depth_anything_3.api import DepthAnything3
-device = torch.device("cuda")
-model = DepthAnything3.from_pretrained("depth-anything/DA3NESTED-GIANT-LARGE")
-model = model.to(device=device)
-example_path = "assets/examples/SOH"
-images = sorted(glob.glob(os.path.join(example_path, "*.png")))
-prediction = model.inference(
-    images,
-)
-# prediction.processed_images : [N, H, W, 3] uint8   array
-print(prediction.processed_images.shape)
-# prediction.depth            : [N, H, W]    float32 array
-print(prediction.depth.shape)  
-# prediction.conf             : [N, H, W]    float32 array
-print(prediction.conf.shape)  
-# prediction.extrinsics       : [N, 3, 4]    float32 array # opencv w2c or colmap format
-print(prediction.extrinsics.shape)
-# prediction.intrinsics       : [N, 3, 3]    float32 array
-print(prediction.intrinsics.shape)
-```
+如使用 GPU，請先確認驅動程式可用：
 
 ```bash
-
-export MODEL_DIR=depth-anything/DA3NESTED-GIANT-LARGE
-# This can be a Hugging Face repository or a local directory
-# If you encounter network issues, consider using the following mirror: export HF_ENDPOINT=https://hf-mirror.com
-# Alternatively, you can download the model directly from Hugging Face
-export GALLERY_DIR=workspace/gallery
-mkdir -p $GALLERY_DIR
-
-# CLI auto mode with backend reuse
-da3 backend --model-dir ${MODEL_DIR} --gallery-dir ${GALLERY_DIR} # Cache model to gpu
-da3 auto assets/examples/SOH \
-    --export-format glb \
-    --export-dir ${GALLERY_DIR}/TEST_BACKEND/SOH \
-    --use-backend
-
-# CLI video processing with feature visualization
-da3 video assets/examples/robot_unitree.mp4 \
-    --fps 15 \
-    --use-backend \
-    --export-dir ${GALLERY_DIR}/TEST_BACKEND/robo \
-    --export-format glb-feat_vis \
-    --feat-vis-fps 15 \
-    --process-res-method lower_bound_resize \
-    --export-feat "11,21,31"
-
-# CLI auto mode without backend reuse
-da3 auto assets/examples/SOH \
-    --export-format glb \
-    --export-dir ${GALLERY_DIR}/TEST_CLI/SOH \
-    --model-dir ${MODEL_DIR}
-
+nvidia-smi
 ```
 
-The model architecture is defined in [`DepthAnything3Net`](src/depth_anything_3/model/da3.py), and specified with a Yaml config file located at [`src/depth_anything_3/configs`](src/depth_anything_3/configs). The input and output processing are handled by [`DepthAnything3`](src/depth_anything_3/api.py). To customize the model architecture, simply create a new config file (*e.g.*, `path/to/new/config`) as:
+## Linux 部署
 
-```yaml
-__object__:
-  path: depth_anything_3.model.da3
-  name: DepthAnything3Net
-  args: as_params
+### 1. 取得專案
 
-net:
-  __object__:
-    path: depth_anything_3.model.dinov2.dinov2
-    name: DinoV2
-    args: as_params
-
-  name: vitb
-  out_layers: [5, 7, 9, 11]
-  alt_start: 4
-  qknorm_start: 4
-  rope_start: 4
-  cat_token: True
-
-head:
-  __object__:
-    path: depth_anything_3.model.dualdpt
-    name: DualDPT
-    args: as_params
-
-  dim_in: &head_dim_in 1536
-  output_dim: 2
-  features: &head_features 128
-  out_channels: &head_out_channels [96, 192, 384, 768]
+```bash
+git clone https://github.com/xin-2005/Obstruction_detector.git
+cd Obstruction_detector
 ```
 
-Then, the model can be created with the following code snippet.
-```python
-from depth_anything_3.cfg import create_object, load_config
+### 2. 安裝 uv
 
-Model = create_object(load_config("path/to/new/config"))
+專案已提交 `uv.lock`，建議透過 uv 建立並同步一致的 Python 3.11 環境：
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source "$HOME/.local/bin/env"
+uv --version
 ```
 
+若目前終端機仍找不到 `uv`，請重新登入，或執行：
 
-
-## 📚 Useful Documentation
-
-- 🖥️ [Command Line Interface](docs/CLI.md)
-- 📑 [Python API](docs/API.md)
-- 📊 [Benchmark Evaluation](docs/BENCHMARK.md)
-
-## 🗂️ Model Cards
-
-Generally, you should observe that DA3-LARGE achieves comparable results to VGGT.
-
-The Nested series uses an Any-view model to estimate pose and depth, and a monocular metric depth estimator for scaling. 
-
-⚠️ Models with the `-1.1` suffix are retrained after fixing a training bug; prefer these refreshed checkpoints. The original `DA3NESTED-GIANT-LARGE`, `DA3-GIANT`, and `DA3-LARGE` remain available but are deprecated. You could expect much better performance for street scenes with the `-1.1` models.
-
-| 🗃️ Model Name                  | 📏 Params | 📊 Rel. Depth | 📷 Pose Est. | 🧭 Pose Cond. | 🎨 GS | 📐 Met. Depth | ☁️ Sky Seg | 📄 License     |
-|-------------------------------|-----------|---------------|--------------|---------------|-------|---------------|-----------|----------------|
-| **Nested** | | | | | | | | |
-| [DA3NESTED-GIANT-LARGE-1.1](https://huggingface.co/depth-anything/DA3NESTED-GIANT-LARGE-1.1)  | 1.40B     | ✅             | ✅            | ✅             | ✅     | ✅             | ✅         | CC BY-NC 4.0   |
-| [DA3NESTED-GIANT-LARGE](https://huggingface.co/depth-anything/DA3NESTED-GIANT-LARGE)  | 1.40B     | ✅             | ✅            | ✅             | ✅     | ✅             | ✅         | CC BY-NC 4.0   |
-| **Any-view Model** | | | | | | | | |
-| [DA3-GIANT-1.1](https://huggingface.co/depth-anything/DA3-GIANT-1.1)                     | 1.15B     | ✅             | ✅            | ✅             | ✅     |               |           | CC BY-NC 4.0   |
-| [DA3-GIANT](https://huggingface.co/depth-anything/DA3-GIANT)                     | 1.15B     | ✅             | ✅            | ✅             | ✅     |               |           | CC BY-NC 4.0   |
-| [DA3-LARGE-1.1](https://huggingface.co/depth-anything/DA3-LARGE-1.1)                     | 0.35B     | ✅             | ✅            | ✅             |       |               |           | CC BY-NC 4.0     |
-| [DA3-LARGE](https://huggingface.co/depth-anything/DA3-LARGE)                     | 0.35B     | ✅             | ✅            | ✅             |       |               |           | CC BY-NC 4.0     |
-| [DA3-BASE](https://huggingface.co/depth-anything/DA3-BASE)                     | 0.12B     | ✅             | ✅            | ✅             |       |               |           | Apache 2.0     |
-| [DA3-SMALL](https://huggingface.co/depth-anything/DA3-SMALL)                     | 0.08B     | ✅             | ✅            | ✅             |       |               |           | Apache 2.0     |
-|                               |           |               |              |               |               |       |           |                |
-| **Monocular Metric Depth** | | | | | | | | |
-| [DA3METRIC-LARGE](https://huggingface.co/depth-anything/DA3METRIC-LARGE)              | 0.35B     | ✅             |              |               |       | ✅             | ✅         | Apache 2.0     |
-|                               |           |               |              |               |               |       |           |                |
-| **Monocular Depth** | | | | | | | | |
-| [DA3MONO-LARGE](https://huggingface.co/depth-anything/DA3MONO-LARGE)                | 0.35B     | ✅             |              |               |               |       | ✅         | Apache 2.0     |
-
-
-## ❓ FAQ
-
-- **Monocular Metric Depth**: To obtain metric depth in meters from `DA3METRIC-LARGE`, use `metric_depth = focal * net_output / 300.`, where `focal` is the focal length in pixels (typically the average of fx and fy from the camera intrinsic matrix K). Note that the output from `DA3NESTED-GIANT-LARGE` is already in meters.
-
-- <a id="use-ray-pose"></a>**Ray Head (`use_ray_pose`)**:  Our API and CLI support `use_ray_pose` arg, which means that the model will derive camera pose from ray head, which is generally slightly slower, but more accurate. Note that the default is `False` for faster inference speed. 
-  <details>
-  <summary>AUC3 Results for DA3NESTED-GIANT-LARGE</summary>
-  
-  | Model | HiRoom | ETH3D | DTU | 7Scenes | ScanNet++ | 
-  |-------|------|-------|-----|---------|-----------|
-  | `ray_head` | 84.4 | 52.6 | 93.9 | 29.5 | 89.4 |
-  | `cam_head` | 80.3 | 48.4 | 94.1 | 28.5 | 85.0 |
-
-  </details>
-
-
-
-
-- **Older GPUs without XFormers support**: See [Issue #11](https://github.com/ByteDance-Seed/Depth-Anything-3/issues/11). Thanks to [@S-Mahoney](https://github.com/S-Mahoney) for the solution!
-
-
-## 🏢 Awesome DA3 Projects
-
-A community-curated list of Depth Anything 3 integrations across 3D tools, creative pipelines, robotics, and web/VR viewers, including but not limited to these. You are welcome to submit your DA3-based project via PR, and we will review and feature it if applicable.
-
-- [DA3-blender](https://github.com/xy-gao/DA3-blender): Blender addon for DA3-based 3D reconstruction from a set of images. 
-
-- [ComfyUI-DepthAnythingV3](https://github.com/PozzettiAndrea/ComfyUI-DepthAnythingV3): ComfyUI nodes for Depth Anything 3, supporting single/multi-view and video-consistent depth with optional point‑cloud export.
-
-- [DA3-ROS2-Wrapper](https://github.com/GerdsenAI/GerdsenAI-Depth-Anything-3-ROS2-Wrapper): Real-time DA3 depth in ROS2 with multi-camera support. 
-
-- [DA3-ROS2-CPP-TensorRT](https://github.com/ika-rwth-aachen/ros2-depth-anything-v3-trt): DA3 ROS2 C++ TensorRT Inference Node: a ROS2 node for DA3 depth estimation using TensorRT for real-time inference.
-
-- [VideoDepthViewer3D](https://github.com/amariichi/VideoDepthViewer3D): Streaming videos with DA3 metric depth to a Three.js/WebXR 3D viewer for VR/stereo playback.
-
-
-## 🧑‍💻 Official Codebase Core Contributors and Maintainers
-
-<table>
-  <tr>
-    <td align="center">
-      <a href="https://bingykang.github.io/">
-        <img src="https://images.weserv.nl/?url=https://bingykang.github.io/images/bykang_homepage.jpeg?h=100&w=100&fit=cover&mask=circle&maxage=7d" width="100px;" alt=""/>
-      </a>
-        <br />
-        <sub><b>Bingyi Kang</b></sub>
-    </td>
-    <td align="center">
-      <a href="https://haotongl.github.io/">
-        <img src="https://images.weserv.nl/?url=https://haotongl.github.io/assets/img/prof_pic.jpg?h=100&w=100&fit=cover&mask=circle&maxage=7d" width="100px;" alt=""/>
-      </a>
-        <br />
-        <sub>Haotong Lin</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/SiliChen321">
-        <img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/195901058?v=4&h=100&w=100&fit=cover&mask=circle&maxage=7d" width="100px;" alt=""/>
-      </a>
-        <br />
-        <sub>Sili Chen</sub>
-    </td>
-    <td align="center">
-      <a href="https://liewjunhao.github.io/">
-        <img src="https://images.weserv.nl/?url=https://liewjunhao.github.io/images/liewjunhao.png?h=100&w=100&fit=cover&mask=circle&maxage=7d" width="100px;" alt=""/>
-       </a>
-        <br />
-        <sub>Jun Hao Liew</sub>
-    </td>
-    <td align="center">
-      <a href="https://donydchen.github.io/">
-        <img src="https://images.weserv.nl/?url=https://donydchen.github.io/assets/img/profile.jpg?h=100&w=100&fit=cover&mask=circle&maxage=7d" width="100px;" alt=""/>
-      </a>
-        <br />
-        <sub>Donny Y. Chen</sub>
-    </td>
-    <td align="center">
-      <a href="https://github.com/DengKaiCQ">
-        <img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/59907452?v=4&h=100&w=100&fit=cover&mask=circle&maxage=7d" width="100px;" alt=""/>
-      </a>
-        <br />
-        <sub>Kai Deng</sub>
-    </td>
-  </tr>
-</table>
-
-## 📝 Citations
-If you find Depth Anything 3 useful in your research or projects, please cite our work:
-
+```bash
+export PATH="$HOME/.local/bin:$PATH"
 ```
-@article{depthanything3,
-  title={Depth Anything 3: Recovering the visual space from any views},
-  author={Haotong Lin and Sili Chen and Jun Hao Liew and Donny Y. Chen and Zhenyu Li and Guang Shi and Jiashi Feng and Bingyi Kang},
-  journal={arXiv preprint arXiv:2511.10647},
-  year={2025}
-}
+
+### 3. 安裝專案相依套件
+
+```bash
+uv python install 3.11
+uv sync --frozen
 ```
+
+目前鎖定環境包含 PyTorch、TorchVision、xFormers、OpenCV、Ultralytics、Matplotlib 與 DA3 所需套件。PyTorch、TorchVision 和 xFormers 使用 `pyproject.toml` 中設定的 CUDA 12.8 軟體來源。
+
+驗證安裝與 GPU 狀態：
+
+```bash
+uv run python -c "import torch; import cv2; import ultralytics; print('torch:', torch.__version__); print('cuda:', torch.cuda.is_available()); print('gpu:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
+```
+
+### 4. 準備模型
+
+YOLO 權重已位於：
+
+```text
+models/yolo11n-seg.pt
+```
+
+DA3 預設使用 Hugging Face 模型 `depth-anything/DA3METRIC-LARGE`。第一次執行時會自動下載並快取權重。若伺服器無法在執行時連線網路，可預先下載至專案目錄：
+
+```bash
+uv run hf download depth-anything/DA3METRIC-LARGE \
+  --local-dir models/DA3METRIC-LARGE
+```
+
+之後將執行參數改為：
+
+```bash
+--model-dir models/DA3METRIC-LARGE
+```
+
+## 輸入資料需求
+
+正常參考影像對偵測效果非常重要：
+
+- 參考影像應來自與影片相同的固定機位；
+- 參考影像中不應包含需要偵測的新遮擋物；
+- 參考影像與影片應具有相同長寬比，建議解析度也保持一致；
+- 相機移動、明顯晃動、變焦或場景結構變化會產生額外深度差異；
+- 光線變化通常比機位變化的影響小，但過暗、反光或透明區域仍可能影響深度估算。
+
+## 執行影片遮擋偵測
+
+### 建議模式：依深度正規化面積
+
+可直接使用專案內的範例資料：
+
+```bash
+uv run python -m depth_anything_3.detect_video_occlusion_depth_ratio \
+  assets/images/normal.png \
+  assets/videos/input.mp4 \
+  --yolo-model models/yolo11n-seg.pt \
+  --model-dir depth-anything/DA3METRIC-LARGE \
+  --device cuda \
+  --yolo-device cuda:0 \
+  --area-mode depth \
+  --save-alert-frames
+```
+
+若使用預先下載的本機 DA3 權重，請將 `--model-dir` 改為 `models/DA3METRIC-LARGE`。
+
+### 固定面積門檻模式
+
+若鏡頭中目標距離的變化很小，可使用較簡單的固定面積模式：
+
+```bash
+uv run python -m depth_anything_3.detect_video_occlusion \
+  /data/normal.jpg \
+  /data/input.mp4 \
+  --yolo-model models/yolo11n-seg.pt \
+  --model-dir depth-anything/DA3METRIC-LARGE \
+  --device cuda \
+  --yolo-device cuda:0 \
+  --depth-threshold 0.5 \
+  --min-area-ratio 0.03 \
+  --save-alert-frames
+```
+
+### 快速測試
+
+部署後建議先處理少量畫格，確認模型、顯示卡和影片編解碼皆正常：
+
+```bash
+uv run python -m depth_anything_3.detect_video_occlusion_depth_ratio \
+  assets/images/normal.png \
+  assets/videos/input.mp4 \
+  --yolo-model models/yolo11n-seg.pt \
+  --max-frames 10
+```
+
+### 背景執行
+
+長影片可使用 `nohup` 在背景執行：
+
+```bash
+mkdir -p logs
+nohup uv run python -m depth_anything_3.detect_video_occlusion_depth_ratio \
+  /data/normal.jpg \
+  /data/input.mp4 \
+  --yolo-model models/yolo11n-seg.pt \
+  --model-dir depth-anything/DA3METRIC-LARGE \
+  --device cuda \
+  --yolo-device cuda:0 \
+  --save-alert-frames \
+  > logs/occlusion.log 2>&1 &
+```
+
+查看執行狀態：
+
+```bash
+tail -f logs/occlusion.log
+```
+
+## 圖片比對模式
+
+除了影片之外，也可直接比較正常圖片與遮擋圖片：
+
+```bash
+uv run python -m depth_anything_3.detect_depth_occlusion \
+  assets/images/normal.png \
+  assets/images/2.png \
+  --yolo-model models/yolo11n-seg.pt \
+  --model-dir depth-anything/DA3METRIC-LARGE \
+  --device cuda \
+  --yolo-device cuda:0
+```
+
+若已有兩張圖片對應的 DA3 `results.npz`，可透過 `--normal-depth` 與 `--occluded-depth` 重複使用深度結果，略過 DA3 推論。兩個參數必須同時提供。
+
+## 主要參數
+
+### 共用參數
+
+| 參數 | 預設值 | 說明 |
+| --- | ---: | --- |
+| `--model-dir` | `depth-anything/DA3METRIC-LARGE` | Hugging Face 模型名稱或本機模型目錄 |
+| `--device` | `cuda` | DA3 推論裝置，例如 `cuda`、`cuda:0` 或 `cpu` |
+| `--yolo-model` | 影片模式必填 | YOLO segmentation 權重路徑 |
+| `--yolo-device` | 自動選擇 | YOLO 裝置，例如 `cuda:0` 或 `cpu` |
+| `--yolo-confidence` | `0.25` | YOLO 偵測信心門檻 |
+| `--yolo-image-size` | `640` | YOLO 推論影像尺寸 |
+| `--process-res` | `504` | DA3 處理解析度上限；降低可減少顯示記憶體用量 |
+| `--depth-threshold` | `0.5` | 判定為遮擋候選所需的最小深度減少值；使用預設 metric 模型時可近似以公尺理解 |
+| `--person-alert-ratio` | `0.3333` | 人員遮罩占深度圖比例達到此值時發出警報 |
+| `--person-dilate` | `7` | 清除深度變化時，人員遮罩向外擴張的像素半徑 |
+| `--frame-step` | `1` | 每隔多少畫格分析一次；略過的畫格會原樣寫入輸出影片 |
+| `--max-frames` | `0` | 最多讀取多少畫格，`0` 代表處理完整影片 |
+| `--save-alert-frames` | 關閉 | 儲存警報畫格、遮擋遮罩及忽略的人員遮罩 |
+| `--output-root` | 依模式而定 | 指定每次執行結果的根目錄 |
+
+### 深度正規化面積參數
+
+| 參數 | 預設值 | 說明 |
+| --- | ---: | --- |
+| `--area-mode` | `depth` | `depth` 使用深度正規化，`fixed` 使用固定面積 |
+| `--reference-depth` | `3.0` | 校準面積門檻時的參考距離 |
+| `--reference-area-ratio` | `0.03` | 物體位於參考距離時所需的最小畫面面積比例 |
+| `--dynamic-min-area-ratio` | `0.003` | 動態面積門檻下限 |
+| `--dynamic-max-area-ratio` | `0.30` | 動態面積門檻上限 |
+| `--component-min-area-ratio` | `0.0005` | 計算區域深度前捨棄的微小連通區域門檻 |
+| `--region-depth-erode` | `2` | 計算區域中位深度前的遮罩侵蝕半徑 |
+
+### 固定面積參數
+
+| 參數 | 預設值 | 說明 |
+| --- | ---: | --- |
+| `--min-area-ratio` | `0.03` | 連通區域至少占完整深度圖的比例 |
+| `--blur-size` | `5` | 深度差高斯模糊核心大小，必須為正奇數 |
+| `--open-size` | `3` | 形態學開運算核心大小，必須為正奇數 |
+| `--close-size` | `7` | 形態學閉運算核心大小，必須為正奇數 |
+
+查看所有參數：
+
+```bash
+uv run python -m depth_anything_3.detect_video_occlusion_depth_ratio --help
+uv run python -m depth_anything_3.detect_video_occlusion --help
+uv run python -m depth_anything_3.detect_depth_occlusion --help
+```
+
+## 輸出說明
+
+深度正規化影片模式預設寫入：
+
+```text
+outputs/video_occlusion_depth_ratio_runs/<時間戳記_影片名稱>/
+├── annotated.mp4             # 含判定文字、紅色遮罩及外框的結果影片
+├── frame_results.jsonl       # 每個已分析畫格一行 JSON 結果
+├── summary.json              # 本次影片分析摘要
+└── alert_frames/             # 僅使用 --save-alert-frames 時產生
+    ├── frame_XXXXXXXX.png
+    ├── frame_XXXXXXXX_mask.png
+    └── frame_XXXXXXXX_ignored_person.png
+```
+
+固定面積影片模式預設寫入 `outputs/video_occlusion_runs/`。
+
+圖片比對模式預設寫入：
+
+```text
+outputs/occlusion_detection/
+├── report.json
+├── overview.png
+├── occlusion_overlay.png
+├── occlusion_mask.png
+├── ignored_person_mask.png
+└── depth_difference.npy
+```
+
+`frame_results.jsonl` 與 `report.json` 中的主要結論如下：
+
+- `PERSON_OCCLUSION`：人員覆蓋比例達到警報門檻；
+- `DEPTH_OCCLUSION`：存在符合門檻的非人員深度遮擋區域；
+- `NO_LARGE_OCCLUSION`：未偵測到大面積遮擋。
+
+## 門檻調整建議
+
+- 誤報較多：增加 `--depth-threshold`、`--reference-area-ratio` 或 `--min-area-ratio`；
+- 小型遮擋漏報：降低上述門檻，但會增加對雜訊及背景變化的敏感度；
+- 遠處物體經常漏報：使用 `--area-mode depth`，並適度降低 `--dynamic-min-area-ratio`；
+- 人員誤報較多：增加 `--yolo-confidence` 或 `--person-alert-ratio`；
+- 顯示記憶體不足：優先降低 `--process-res` 和 `--yolo-image-size`；
+- 處理速度太慢：增加 `--frame-step`。此參數會減少分析畫格數，但輸出影片仍保留未分析畫格。
+
+建議從預設值開始，使用實際固定機位所收集的正常及遮擋樣本調整參數，不要只依照範例影片決定正式環境的門檻。
+
+## 常見問題
+
+### `torch.cuda.is_available()` 顯示 `False`
+
+請確認 `nvidia-smi` 可正常執行，且 NVIDIA 驅動程式支援 CUDA 12.8 執行環境，再重新執行 `uv sync --frozen`。本專案不需要另外安裝完整 CUDA Toolkit，但需要可用的 NVIDIA 驅動程式。
+
+### DA3 模型下載失敗
+
+請在可連線網路的電腦上使用 `uv run hf download` 下載，再將完整模型目錄複製至伺服器，並透過 `--model-dir` 指向該目錄。
+
+### 提示參考影像與影片畫格的深度尺寸不同
+
+請確認參考影像與影片來自相同機位且具有相同長寬比。最穩定的方式是直接從同一影片來源擷取正常狀態的一幀作為參考影像。
+
+### 無法讀取影片或建立輸出影片
+
+請確認輸入影片路徑正確且已安裝 FFmpeg。預設輸出編碼為 `mp4v`，也可透過 `--codec` 傳入目前 OpenCV 環境支援的四字元編碼。
+
+### 結果只有人員遮擋，沒有一般深度遮擋
+
+這是預期邏輯：所有人員遮罩都會從一般深度變化候選區域中移除；只有人員覆蓋率達到 `--person-alert-ratio` 時，才會以 `PERSON_OCCLUSION` 發出警報。
+
+## 致謝與授權條款
+
+本專案建立於 ByteDance Seed 開源的 [Depth Anything 3](https://github.com/ByteDance-Seed/Depth-Anything-3)，並使用 [Ultralytics](https://github.com/ultralytics/ultralytics) 提供的 YOLO segmentation 功能。
+
+專案程式碼授權條款請參閱 [LICENSE](LICENSE)。部署及散布前，請另外確認所使用的 DA3 模型權重與 YOLO 權重授權條款是否符合你的使用情境。
