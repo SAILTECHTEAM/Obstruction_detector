@@ -153,8 +153,7 @@ uv run python -m depth_anything_3.detect_video_occlusion_depth_ratio \
   --model-dir depth-anything/DA3METRIC-LARGE \
   --device cuda \
   --yolo-device cuda:0 \
-  --area-mode depth \
-  --save-alert-frames
+  --area-mode depth 
 ```
 
 若使用預先下載的本機 DA3 權重，請將 `--model-dir` 改為 `models/DA3METRIC-LARGE`。
@@ -165,15 +164,14 @@ uv run python -m depth_anything_3.detect_video_occlusion_depth_ratio \
 
 ```bash
 uv run python -m depth_anything_3.detect_video_occlusion \
-  /data/normal.jpg \
-  /data/input.mp4 \
+  assets/images/normal.png \
+  assets/videos/input.mp4 \
   --yolo-model models/yolo11n-seg.pt \
   --model-dir depth-anything/DA3METRIC-LARGE \
   --device cuda \
   --yolo-device cuda:0 \
   --depth-threshold 0.5 \
-  --min-area-ratio 0.03 \
-  --save-alert-frames
+  --min-area-ratio 0.03
 ```
 
 ### 快速測試

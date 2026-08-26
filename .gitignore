@@ -46,7 +46,8 @@ temp*.png
 /.ruff_cache/
 
 # Runtime outputs
-/runs/
+/outputs/
+*.mp4
 
 # IDE / OS
 /.vscode/
