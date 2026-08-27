@@ -97,7 +97,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ```bash
 uv python install 3.11
-uv sync --frozen
+uv sync
 ```
 
 目前鎖定環境包含 PyTorch、TorchVision、xFormers、OpenCV、Ultralytics、Matplotlib 與 DA3 所需套件。PyTorch、TorchVision 和 xFormers 使用 `pyproject.toml` 中設定的 CUDA 12.8 軟體來源。
@@ -153,7 +153,7 @@ uv run python -m depth_anything_3.detect_video_occlusion_depth_ratio \
   --model-dir depth-anything/DA3METRIC-LARGE \
   --device cuda \
   --yolo-device cuda:0 \
-  --area-mode depth 
+  --area-mode depth
 ```
 
 若使用預先下載的本機 DA3 權重，請將 `--model-dir` 改為 `models/DA3METRIC-LARGE`。
@@ -184,29 +184,6 @@ uv run python -m depth_anything_3.detect_video_occlusion_depth_ratio \
   assets/videos/input.mp4 \
   --yolo-model models/yolo11n-seg.pt \
   --max-frames 10
-```
-
-### 背景執行
-
-長影片可使用 `nohup` 在背景執行：
-
-```bash
-mkdir -p logs
-nohup uv run python -m depth_anything_3.detect_video_occlusion_depth_ratio \
-  /data/normal.jpg \
-  /data/input.mp4 \
-  --yolo-model models/yolo11n-seg.pt \
-  --model-dir depth-anything/DA3METRIC-LARGE \
-  --device cuda \
-  --yolo-device cuda:0 \
-  --save-alert-frames \
-  > logs/occlusion.log 2>&1 &
-```
-
-查看執行狀態：
-
-```bash
-tail -f logs/occlusion.log
 ```
 
 ## 圖片比對模式
