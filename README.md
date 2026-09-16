@@ -1,4 +1,4 @@
-# 基於 Depth Anything 3 的影片遮擋偵測
+# 基於 Depth Anything 3 的遮擋、深度與玻璃後人員偵測
 
 本專案基於 [Depth Anything 3（DA3）](https://github.com/ByteDance-Seed/Depth-Anything-3) 開發，用於判斷固定機位畫面中是否出現大面積的新遮擋物。系統將正常場景參考影像與影片畫格逐幀比較，並結合：
 
@@ -7,7 +7,7 @@
 - **連通區域與面積判定**：過濾小範圍雜訊並輸出遮擋區域；
 - **深度正規化面積**：依照物體距離動態調整面積門檻，降低透視造成的影響。
 
-目前專案是離線影片分析程式，不是 Web 服務。輸入為一張正常參考影像與一段待偵測影片；輸出包含標註後的影片、逐幀偵測結果及摘要報告。
+目前專案提供離線圖片與影片分析工具，不是 Web 服務。主要遮擋工具以一張正常參考影像搭配待測圖片或影片運作；另提供深度圖匯出、深度比較、兩點距離量測，以及固定鏡位的玻璃前後人員分類。
 
 ## 偵測邏輯
 
@@ -21,7 +21,7 @@
 6. 非人員的深度變化區域達到面積門檻時輸出 `DEPTH_OCCLUSION`；
 7. 否則輸出 `NO_LARGE_OCCLUSION`。
 
-建議使用 `detect_video_occlusion_depth_ratio`。此模式會依照區域深度修正面積門檻，比固定像素面積更適合遠近尺度差異明顯的監控畫面。
+使用 `detect_occlusion --area-mode depth` 可依照區域深度修正面積門檻，比固定像素面積更適合遠近尺度差異明顯的監控畫面。
 
 ## 專案結構
 
@@ -34,10 +34,15 @@ depth_anythingv3/
 │   └── yolo11n-seg.pt           # 專案內附的 YOLO 人員分割權重
 ├── outputs/                     # 執行後自動產生，不提交至 Git
 ├── src/depth_anything_3/
-│   ├── detect_depth_occlusion.py
-│   ├── detect_video_occlusion.py
-│   ├── detect_video_occlusion_depth_ratio.py
-│   └── person_segmentation.py
+│   ├── detect_occlusion.py
+│   ├── detect_person_behind_glass.py
+│   ├── export_depth_map.py
+│   ├── compare_depth_maps.py
+│   ├── measure_location_distance.py
+│   └── utils/
+│       ├── depth_analysis.py
+│       ├── masks.py
+│       └── person_segmentation.py
 ├── pyproject.toml
 └── uv.lock
 ```
@@ -141,12 +146,14 @@ uv run hf download depth-anything/DA3METRIC-LARGE \
 
 ## 執行影片遮擋偵測
 
+`detect_occlusion` 會依檔案副檔名自動判斷第二個輸入是圖片或影片；也可用 `--input-type image` 或 `--input-type video` 強制指定。
+
 ### 建議模式：依深度正規化面積
 
 可直接使用專案內的範例資料：
 
 ```bash
-uv run python -m depth_anything_3.detect_video_occlusion_depth_ratio \
+uv run python -m depth_anything_3.detect_occlusion \
   assets/images/normal.png \
   assets/videos/input.mp4 \
   --yolo-model models/yolo11n-seg.pt \
@@ -163,7 +170,7 @@ uv run python -m depth_anything_3.detect_video_occlusion_depth_ratio \
 若鏡頭中目標距離的變化很小，可使用較簡單的固定面積模式：
 
 ```bash
-uv run python -m depth_anything_3.detect_video_occlusion \
+uv run python -m depth_anything_3.detect_occlusion \
   assets/images/normal.png \
   assets/videos/input.mp4 \
   --yolo-model models/yolo11n-seg.pt \
@@ -179,19 +186,21 @@ uv run python -m depth_anything_3.detect_video_occlusion \
 部署後建議先處理少量畫格，確認模型、顯示卡和影片編解碼皆正常：
 
 ```bash
-uv run python -m depth_anything_3.detect_video_occlusion_depth_ratio \
+uv run python -m depth_anything_3.detect_occlusion \
   assets/images/normal.png \
   assets/videos/input.mp4 \
   --yolo-model models/yolo11n-seg.pt \
   --max-frames 10
 ```
 
+影片執行時會顯示 `tqdm` 進度列。結束後會輸出模型載入、參考影像推論，以及每個已分析畫格的平均深度、分割與比較時間；完整資料也會寫入 `summary.json` 與 `frame_results.jsonl`。DA3 內部的逐畫格 INFO 訊息預設隱藏，除錯時可加上 `--verbose`。
+
 ## 圖片比對模式
 
 除了影片之外，也可直接比較正常圖片與遮擋圖片：
 
 ```bash
-uv run python -m depth_anything_3.detect_depth_occlusion \
+uv run python -m depth_anything_3.detect_occlusion \
   assets/images/normal.png \
   assets/images/2.png \
   --yolo-model models/yolo11n-seg.pt \
@@ -199,8 +208,6 @@ uv run python -m depth_anything_3.detect_depth_occlusion \
   --device cuda \
   --yolo-device cuda:0
 ```
-
-若已有兩張圖片對應的 DA3 `results.npz`，可透過 `--normal-depth` 與 `--occluded-depth` 重複使用深度結果，略過 DA3 推論。兩個參數必須同時提供。
 
 ## 主要參數
 
@@ -210,7 +217,7 @@ uv run python -m depth_anything_3.detect_depth_occlusion \
 | --- | ---: | --- |
 | `--model-dir` | `depth-anything/DA3METRIC-LARGE` | Hugging Face 模型名稱或本機模型目錄 |
 | `--device` | `cuda` | DA3 推論裝置，例如 `cuda`、`cuda:0` 或 `cpu` |
-| `--yolo-model` | 影片模式必填 | YOLO segmentation 權重路徑 |
+| `--yolo-model` | 影片模式必填 | YOLO segmentation 權重路徑；圖片模式亦可用兩個 YOLO TXT 遮罩替代 |
 | `--yolo-device` | 自動選擇 | YOLO 裝置，例如 `cuda:0` 或 `cpu` |
 | `--yolo-confidence` | `0.25` | YOLO 偵測信心門檻 |
 | `--yolo-image-size` | `640` | YOLO 推論影像尺寸 |
@@ -222,12 +229,15 @@ uv run python -m depth_anything_3.detect_depth_occlusion \
 | `--max-frames` | `0` | 最多讀取多少畫格，`0` 代表處理完整影片 |
 | `--save-alert-frames` | 關閉 | 儲存警報畫格、遮擋遮罩及忽略的人員遮罩 |
 | `--output-root` | 依模式而定 | 指定每次執行結果的根目錄 |
+| `--output-dir` | `outputs/image_occlusion` | 圖片模式輸出目錄 |
+| `--input-type` | `auto` | `auto`、`image` 或 `video` |
+| `--verbose` | 關閉 | 顯示 DA3 每次推論的內部 INFO 訊息 |
 
 ### 深度正規化面積參數
 
 | 參數 | 預設值 | 說明 |
 | --- | ---: | --- |
-| `--area-mode` | `depth` | `depth` 使用深度正規化，`fixed` 使用固定面積 |
+| `--area-mode` | `fixed` | `depth` 使用深度正規化，`fixed` 使用固定面積 |
 | `--reference-depth` | `3.0` | 校準面積門檻時的參考距離 |
 | `--reference-area-ratio` | `0.03` | 物體位於參考距離時所需的最小畫面面積比例 |
 | `--dynamic-min-area-ratio` | `0.003` | 動態面積門檻下限 |
@@ -247,17 +257,15 @@ uv run python -m depth_anything_3.detect_depth_occlusion \
 查看所有參數：
 
 ```bash
-uv run python -m depth_anything_3.detect_video_occlusion_depth_ratio --help
-uv run python -m depth_anything_3.detect_video_occlusion --help
-uv run python -m depth_anything_3.detect_depth_occlusion --help
+uv run python -m depth_anything_3.detect_occlusion --help
 ```
 
 ## 輸出說明
 
-深度正規化影片模式預設寫入：
+影片模式預設寫入：
 
 ```text
-outputs/video_occlusion_depth_ratio_runs/<時間戳記_影片名稱>/
+outputs/video_occlusion_runs/<時間戳記_影片名稱>/
 ├── annotated.mp4             # 含判定文字、紅色遮罩及外框的結果影片
 ├── frame_results.jsonl       # 每個已分析畫格一行 JSON 結果
 ├── summary.json              # 本次影片分析摘要
@@ -267,21 +275,17 @@ outputs/video_occlusion_depth_ratio_runs/<時間戳記_影片名稱>/
     └── frame_XXXXXXXX_ignored_person.png
 ```
 
-固定面積影片模式預設寫入 `outputs/video_occlusion_runs/`。
-
 圖片比對模式預設寫入：
 
 ```text
-outputs/occlusion_detection/
-├── report.json
-├── overview.png
+outputs/image_occlusion/
+├── result.json
 ├── occlusion_overlay.png
 ├── occlusion_mask.png
 ├── ignored_person_mask.png
-└── depth_difference.npy
 ```
 
-`frame_results.jsonl` 與 `report.json` 中的主要結論如下：
+`frame_results.jsonl`（影片）與 `result.json`（圖片）中的主要結論如下：
 
 - `PERSON_OCCLUSION`：人員覆蓋比例達到警報門檻；
 - `DEPTH_OCCLUSION`：存在符合門檻的非人員深度遮擋區域；
@@ -297,6 +301,67 @@ outputs/occlusion_detection/
 - 處理速度太慢：增加 `--frame-step`。此參數會減少分析畫格數，但輸出影片仍保留未分析畫格。
 
 建議從預設值開始，使用實際固定機位所收集的正常及遮擋樣本調整參數，不要只依照範例影片決定正式環境的門檻。
+
+## 其他工具
+
+### 匯出單張圖片的深度圖
+
+```bash
+uv run python -m depth_anything_3.export_depth_map assets/images/example.jpg
+```
+
+會輸出原始數值深度 `exports/mini_npz/results.npz`（使用 `data["depth"]` 讀取）與可檢視的 `depth_vis/0000.jpg`。使用 `--output-dir` 可指定輸出位置。
+
+### 比較兩個已儲存的深度圖
+
+```bash
+uv run python -m depth_anything_3.compare_depth_maps \
+  --depth1 outputs/depth_maps/example_a/exports/mini_npz/results.npz \
+  --depth2 outputs/depth_maps/example_b/exports/mini_npz/results.npz \
+  --no-show
+```
+
+### 量測兩個點或框的深度距離
+
+```bash
+uv run python -m depth_anything_3.measure_location_distance assets/images/example.jpg \
+  --point-a 190 250 --point-b 460 270
+```
+
+此工具以中心周圍的深度區域中位數取樣，輸出兩個深度及 `depth_difference`。若相機已校正，可加上 `--intrinsics FX FY CX CY` 取得 `3d_distance`。
+
+### 固定鏡位玻璃前後的人員分類
+
+先拍攝一張沒有人的玻璃／房間參考影像，再與目前影像比較：
+
+```bash
+uv run python -m depth_anything_3.detect_person_behind_glass \
+  assets/images/empty_glass.jpg assets/images/current.jpg \
+  --yolo-model models/yolo11n-seg.pt
+```
+
+工具會為每個分割出的人員輸出 `in_front_of_glass`、`behind_glass` 或 `unknown`，並寫入 `outputs/person_glass_position/classification.json`、分類標註影像與 `yolo_person_segmentation.png`（YOLO 實例分割遮罩）。
+
+### 同時量測距離及分類玻璃前後人員
+
+距離會在第二張（目前）影像量測；這個指令會共用一次 DA3 模型載入與推論結果：
+
+```bash
+uv run python -m depth_anything_3.analyze_glass_and_distance \
+  assets/images/empty_glass.jpg assets/images/current.jpg \
+  --yolo-model models/yolo11n-seg.pt \
+  --point-a 190 250 --point-b 460 270
+```
+
+結果會印到終端並寫入 `outputs/person_glass_position/combined/combined_report.json`，另有兩張人員標註影像。可使用兩組 `--bbox-a X1 Y1 X2 Y2` / `--bbox-b X1 Y1 X2 Y2` 取代點位；加入 `--intrinsics FX FY CX CY` 可得到 `3d_distance`。
+
+## 共用函式模組
+
+所有工具共用下列模組，而不是各自複製深度與遮罩處理邏輯：
+
+- `utils/depth_analysis.py`：DA3 模型載入、圖片／已儲存深度圖讀取、路徑與 OpenCV 影像推論、深度差、有效深度遮罩、深度取樣。
+- `utils/masks.py`：YOLO TXT 遮罩讀取、侵蝕／膨脹、遮罩清理、連通區域與區域資訊。
+- `utils/person_segmentation.py`：Ultralytics YOLO 的整體人員遮罩與逐人實例遮罩。
 
 ## 常見問題
 

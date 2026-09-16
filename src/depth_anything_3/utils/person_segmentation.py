@@ -48,7 +48,19 @@ class UltralyticsPersonSegmenter:
         image_bgr: np.ndarray,
         target_shape: tuple[int, int] | None = None,
     ) -> np.ndarray:
-        """Return all detected people as one uint8 mask.
+        """Return all detected people as one uint8 mask."""
+        height, width = target_shape or image_bgr.shape[:2]
+        mask = np.zeros((height, width), dtype=np.uint8)
+        for instance_mask in self.predict_instance_masks(image_bgr, target_shape):
+            mask[instance_mask > 0] = 255
+        return mask
+
+    def predict_instance_masks(
+        self,
+        image_bgr: np.ndarray,
+        target_shape: tuple[int, int] | None = None,
+    ) -> list[np.ndarray]:
+        """Return one uint8 mask per detected person instance.
 
         ``image_bgr`` follows OpenCV channel order. YOLO's normalized polygons
         are rasterized directly at ``target_shape``, avoiding an intermediate
@@ -61,7 +73,7 @@ class UltralyticsPersonSegmenter:
             height, width = image_bgr.shape[:2]
         else:
             height, width = target_shape
-        mask = np.zeros((height, width), dtype=np.uint8)
+        masks: list[np.ndarray] = []
 
         predict_kwargs: dict[str, object] = {
             "source": image_bgr,
@@ -76,7 +88,7 @@ class UltralyticsPersonSegmenter:
 
         results = self.model.predict(**predict_kwargs)
         if not results or results[0].masks is None:
-            return mask
+            return masks
 
         for polygon in results[0].masks.xyn:
             points = np.asarray(polygon, dtype=np.float32)
@@ -84,6 +96,7 @@ class UltralyticsPersonSegmenter:
                 continue
             points[:, 0] = np.clip(points[:, 0] * width, 0, width - 1)
             points[:, 1] = np.clip(points[:, 1] * height, 0, height - 1)
+            mask = np.zeros((height, width), dtype=np.uint8)
             cv2.fillPoly(mask, [np.rint(points).astype(np.int32)], 255)
-        return mask
-
+            masks.append(mask)
+        return masks

@@ -1,7 +1,7 @@
 """Compare two Depth Anything 3 depth result files.
 
 The default paths match the two metric-depth results in this workspace. Other
-files can be supplied on the command line; see ``python depth_map.py --help``.
+files can be supplied on the command line; see ``python compare_depth_maps.py --help``.
 """
 
 from __future__ import annotations
@@ -12,6 +12,12 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+from depth_anything_3.utils.depth_analysis import (
+    depth_difference,
+    finite_percentiles,
+    load_depth_map as load_depth,
+)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DEPTH1 = (
@@ -21,45 +27,6 @@ DEFAULT_DEPTH2 = (
     PROJECT_ROOT / "outputs/metric-result2/exports/mini_npz/results.npz"
 )
 DEFAULT_OUTPUT = PROJECT_ROOT / "outputs/depth_comparison.png"
-
-
-def load_depth(path: Path, index: int = 0) -> np.ndarray:
-    if not path.is_file():
-        raise FileNotFoundError(f"Depth result not found: {path}")
-
-    if path.suffix.lower() == ".npy":
-        depth = np.asarray(np.load(path, allow_pickle=False), dtype=np.float32)
-    elif path.suffix.lower() == ".npz":
-        with np.load(path, allow_pickle=False) as data:
-            if "depth" not in data:
-                raise KeyError(f"{path} does not contain a 'depth' array")
-            depth = np.asarray(data["depth"], dtype=np.float32)
-    else:
-        raise ValueError(f"Only .npy and .npz are supported: {path}")
-
-    if depth.ndim == 2:
-        return depth
-
-    if depth.ndim == 3:
-        if not 0 <= index < depth.shape[0]:
-            raise IndexError(
-                f"Index {index} is out of range; shape={depth.shape}"
-            )
-        return depth[index]
-
-    raise ValueError(
-        f"Expected (H, W) or (N, H, W), got {depth.shape}"
-    )
-
-def finite_percentiles(*depths: np.ndarray) -> tuple[float, float]:
-    """Return robust shared display limits for multiple depth maps."""
-    values = np.concatenate([depth[np.isfinite(depth)] for depth in depths])
-    if values.size == 0:
-        raise ValueError("The depth maps contain no finite values")
-    low, high = np.percentile(values, (2, 98))
-    if low == high:
-        high = low + 1e-6
-    return float(low), float(high)
 
 
 def compare_depths(
@@ -76,9 +43,7 @@ def compare_depths(
             "Use images with the same resolution and align them before inference."
         )
 
-    valid = np.isfinite(depth1) & np.isfinite(depth2)
-    difference = np.full(depth1.shape, np.nan, dtype=np.float32)
-    difference[valid] = depth2[valid] - depth1[valid]
+    difference = depth_difference(depth1, depth2)
 
     depth_min, depth_max = finite_percentiles(depth1, depth2)
     finite_diff = np.abs(difference[np.isfinite(difference)])

@@ -54,3 +54,4 @@ temp*.png
 /.idea/
 Thumbs.db
 Desktop.ini
+/assets/*
