@@ -1,0 +1,67 @@
+[
+  {
+    "type": "alarm_inference",
+    "schema_version": 2,
+    "message_id": "boot-1789550171032-e44433fde268a790-validation-injected-TPG-01-hitting.alarm.opened.1.21.inference",
+    "alarm_message_id": "boot-1789550171032-e44433fde268a790-validation-injected-TPG-01-hitting.alarm.opened.1.21",
+    "alarm_id": "boot-1789550171032-e44433fde268a790-validation-injected-TPG-01-hitting",
+    "round_id": 21,
+    "event": "hitting",
+    "alarm": 1,
+    "emitted_at_ms": 1789550182741,
+    "camera": {
+      "camera_code": "TPG-01",
+      "camera_index": 0,
+      "location_code": "TEST-ROOM-1",
+      "frame_timestamp_ms": 1789550181693
+    },
+    "bboxes": [
+      {
+        "bbox": [
+          166.22799682617188,
+          310.33612060546875,
+          32.82773208618164,
+          44.3922004699707
+        ],
+        "yolo_id": 1,
+        "yolo_conf": 0.7073917388916016,
+        "track_id": 2,
+        "track_conf": 0.7073917388916016,
+        "tsm_id": 2,
+        "tsm_conf": 0.92333984375,
+        "is_alarm": false
+      },
+      {
+        "bbox": [
+          213.99853515625,
+          257.10986328125,
+          63.4205322265625,
+          109.96539306640625
+        ],
+        "yolo_id": 2,
+        "yolo_conf": 0.7181555032730103,
+        "track_id": 1,
+        "track_conf": 0.7181555032730103,
+        "tsm_id": 1,
+        "tsm_conf": 0.61328125,
+        "is_alarm": false
+      },
+      {
+        "bbox": [
+          197.4795379638672,
+          333.1055908203125,
+          71.10527038574219,
+          154.5554656982422
+        ],
+        "yolo_id": 4,
+        "yolo_conf": 0.6004617214202881,
+        "track_id": 7,
+        "track_conf": 0.6004617214202881,
+        "tsm_id": 2,
+        "tsm_conf": 0.5244140625,
+        "is_alarm": true
+      }
+    ],
+    "original_image": "boot-1789550171032-e44433fde268a790-validation-injected-TPG-01-hitting_warning_orig.jpg"
+  }
+]

@@ -1,0 +1,12 @@
+{
+  "message_id": "35b7c66f-51e7-4065-b4e9-d77e36ef6235",
+  "alarm_message_id": "local-distance-alarm-001",
+  "result_code": 4,
+  "result": "close_to_a_kid",
+  "details": {
+    "3d_distance_m": 1.4427672277556314,
+    "distance_threshold_m": 1.5,
+    "intrinsics_source": "camera_config",
+    "distortion_applied": true
+  }
+}

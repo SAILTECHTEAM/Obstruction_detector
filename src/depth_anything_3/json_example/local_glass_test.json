@@ -1,0 +1,19 @@
+{
+  "type": "alarm_inference",
+  "schema_version": 2,
+  "message_id": "local-glass-inference-001",
+  "alarm_message_id": "local-glass-alarm-001",
+  "event": "alone",
+  "camera": {
+    "camera_code": "TPG-02"
+  },
+  "bboxes": [
+    {
+      "bbox": [759.0, 639.0, 170.0, 215.0],
+      "yolo_id": 1,
+      "yolo_conf": 0.95,
+      "is_alarm": true
+    }
+  ],
+  "original_image": "/root/Documents/Obstruction_detector/assets/images/test_glass/bb_behind_1.jpeg"
+}

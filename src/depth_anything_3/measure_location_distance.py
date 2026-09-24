@@ -2,7 +2,9 @@
 
 The script always reports ``depth_difference``: the difference between the two
 robust metric-depth estimates.  To calculate lateral distance and full
-``3d_distance``, pass calibrated camera intrinsics with ``--intrinsics``.
+``3d_distance``, pass calibrated camera intrinsics with ``--intrinsics`` or
+``--intrinsics-npy``.  Supplying ``--distortion-npy`` undistorts the image and
+the target centres before depth inference and back-projection.
 
 Example:
     uv run python -m depth_anything_3.measure_location_distance image.jpg \
@@ -18,6 +20,7 @@ import argparse
 import json
 from pathlib import Path
 
+import cv2
 import numpy as np
 from depth_anything_3.utils.depth_analysis import (
     infer_depth_from_path,
@@ -81,6 +84,16 @@ def parse_args() -> argparse.Namespace:
             "Calibrated input-image camera intrinsics in pixels. Required for "
             "full 3-D distance when the model does not infer intrinsics."
         ),
+    )
+    parser.add_argument(
+        "--intrinsics-npy",
+        type=Path,
+        help="Path to a calibrated 3x3 camera-matrix .npy file",
+    )
+    parser.add_argument(
+        "--distortion-npy",
+        type=Path,
+        help="Path to OpenCV distortion-coefficients .npy file; requires --intrinsics-npy or --intrinsics",
     )
     return parser.parse_args()
 
@@ -189,12 +202,40 @@ def resolve_intrinsics(
     return None, None
 
 
+def load_intrinsics_npy(path: Path) -> list[float]:
+    """Load OpenCV's 3x3 camera matrix as ``[fx, fy, cx, cy]``."""
+    matrix = np.asarray(np.load(path, allow_pickle=False), dtype=np.float64)
+    if matrix.shape != (3, 3):
+        raise ValueError(f"--intrinsics-npy must contain a 3x3 matrix, got {matrix.shape}")
+    if not np.all(np.isfinite(matrix)):
+        raise ValueError("--intrinsics-npy contains non-finite values")
+    return [float(matrix[0, 0]), float(matrix[1, 1]), float(matrix[0, 2]), float(matrix[1, 2])]
+
+
+def undistort_point(
+    point: tuple[float, float], intrinsics: list[float], distortion: np.ndarray
+) -> tuple[float, float]:
+    """Map a pixel from the source image to the same-sized undistorted image."""
+    fx, fy, cx, cy = intrinsics
+    camera_matrix = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]])
+    points = np.asarray([[point]], dtype=np.float64)
+    corrected = cv2.undistortPoints(points, camera_matrix, distortion, P=camera_matrix)
+    return float(corrected[0, 0, 0]), float(corrected[0, 0, 1])
+
+
 def main() -> None:
     args = parse_args()
     if args.patch_size < 1 or args.patch_size % 2 == 0:
         raise ValueError("--patch-size must be a positive odd integer")
     if args.process_res < 1:
         raise ValueError("--process-res must be positive")
+    if args.intrinsics is not None and args.intrinsics_npy is not None:
+        raise ValueError("Use either --intrinsics or --intrinsics-npy, not both")
+    supplied_intrinsics = args.intrinsics
+    if args.intrinsics_npy is not None:
+        supplied_intrinsics = load_intrinsics_npy(args.intrinsics_npy.resolve())
+    if args.distortion_npy is not None and supplied_intrinsics is None:
+        raise ValueError("--distortion-npy requires --intrinsics or --intrinsics-npy")
     image_path = args.image.resolve()
     if not image_path.is_file():
         raise FileNotFoundError(f"Could not read image: {image_path}")
@@ -206,7 +247,20 @@ def main() -> None:
         image_width, image_height = image.size
 
     model = load_depth_model(args.model_dir, args.device)
-    depth_map, model_intrinsics = infer_depth_from_path(model, image_path, args.process_res)
+    distortion = None
+    if args.distortion_npy is None:
+        depth_map, model_intrinsics = infer_depth_from_path(model, image_path, args.process_res)
+    else:
+        distortion = np.asarray(np.load(args.distortion_npy.resolve(), allow_pickle=False), dtype=np.float64)
+        if distortion.size < 4 or not np.all(np.isfinite(distortion)):
+            raise ValueError("--distortion-npy must contain finite OpenCV distortion coefficients")
+        from depth_anything_3.utils.depth_analysis import infer_depth_from_bgr, load_bgr_image
+
+        fx, fy, cx, cy = supplied_intrinsics
+        camera_matrix = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]])
+        undistorted_image = cv2.undistort(load_bgr_image(image_path), camera_matrix, distortion, None, camera_matrix)
+        depth_map = infer_depth_from_bgr(model, undistorted_image, args.process_res)
+        model_intrinsics = None
 
     depth_height, depth_width = depth_map.shape
     center_a, target_a = target_to_depth_point(
@@ -227,11 +281,21 @@ def main() -> None:
         depth_width,
         depth_height,
     )
+    if distortion is not None:
+        # target_to_depth_point validated the source target and recorded its
+        # source-image centre. Convert that centre to undistorted image pixels
+        # before mapping it to the DA3 depth-map grid.
+        corrected_a = undistort_point(tuple(target_a["image_point"]), supplied_intrinsics, distortion)
+        corrected_b = undistort_point(tuple(target_b["image_point"]), supplied_intrinsics, distortion)
+        center_a = image_point_to_depth_point(corrected_a, image_width, image_height, depth_width, depth_height)
+        center_b = image_point_to_depth_point(corrected_b, image_width, image_height, depth_width, depth_height)
+        target_a["undistorted_image_point"] = list(corrected_a)
+        target_b["undistorted_image_point"] = list(corrected_b)
     depth_a = robust_patch_depth(depth_map, center_a, args.patch_size)
     depth_b = robust_patch_depth(depth_map, center_b, args.patch_size)
     intrinsics, intrinsics_source = resolve_intrinsics(
         model_intrinsics,
-        args.intrinsics,
+        supplied_intrinsics,
         image_width,
         image_height,
         depth_width,
@@ -257,7 +321,10 @@ def main() -> None:
         "point_a_camera": None if point_a is None else point_a.tolist(),
         "point_b_camera": None if point_b is None else point_b.tolist(),
         "3d_distance": three_d_distance,
-        "intrinsics_source": intrinsics_source,
+        "intrinsics_source": (
+            "intrinsics_npy" if args.intrinsics_npy is not None else intrinsics_source
+        ),
+        "distortion_npy": None if args.distortion_npy is None else str(args.distortion_npy.resolve()),
         "3d_distance_note": (
             None
             if intrinsics is not None

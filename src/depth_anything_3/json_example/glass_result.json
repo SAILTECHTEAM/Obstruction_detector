@@ -1,0 +1,16 @@
+{
+  "message_id": "ab9622e5-5cbe-404e-a2e7-5d0f225fc630",
+  "alarm_message_id": "local-glass-alarm-001",
+  "result_code": 1,
+  "result": "behind_glass",
+  "details": {
+    "people": [
+      {
+        "classification": "behind_glass",
+        "valid_pixels": 1452,
+        "front_fraction": 0.0,
+        "median_depth_difference": -0.01525789499282837
+      }
+    ]
+  }
+}

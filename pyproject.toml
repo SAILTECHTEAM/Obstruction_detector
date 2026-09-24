@@ -38,6 +38,8 @@ dependencies = [
     "pre-commit>=4.6.2",
     "matplotlib>=3.11.1",
     "ultralytics>=8.4.127",
+    "pika>=1.4.4",
+    "paramiko>=5.0.0",
 ]
 
 [project.optional-dependencies]

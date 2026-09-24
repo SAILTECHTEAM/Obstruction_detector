@@ -1,0 +1,25 @@
+{
+  "type": "alarm_inference",
+  "schema_version": 2,
+  "message_id": "local-distance-inference-001",
+  "alarm_message_id": "local-distance-alarm-001",
+  "event": "hitting",
+  "camera": {
+    "camera_code": "TPG-01"
+  },
+  "bboxes": [
+    {
+      "bbox": [1124.0, 394.0, 87.0, 103.0],
+      "yolo_id": 1,
+      "yolo_conf": 0.95,
+      "is_alarm": false
+    },
+    {
+      "bbox": [674.0, 487.0, 135.0, 601.0],
+      "yolo_id": 4,
+      "yolo_conf": 0.60,
+      "is_alarm": true
+    }
+  ],
+  "original_image": "/root/Documents/Obstruction_detector/assets/images/test_distance/7.png"
+}

@@ -1,0 +1,15 @@
+{
+  "TPG-01": {
+    "reference_depth_path": "/root/Documents/Obstruction_detector/outputs/depth_maps/bb_orginal/exports/mini_npz/results.npz",
+    "intrinsics_path": "/root/Documents/Obstruction_detector/assets/images/calibration/intrinsics.npy",
+    "distortion_path": "/root/Documents/Obstruction_detector/assets/images/calibration/distortion.npy",
+    "image_size": [1920, 1080]
+  },
+
+  "TPG-02": {
+    "reference_depth_path": "/root/Documents/Obstruction_detector/outputs/depth_maps/bb_orginal/exports/mini_npz/results.npz",
+    "intrinsics_path": "/root/Documents/Obstruction_detector/assets/images/calibration/intrinsics.npy",
+    "distortion_path": "/root/Documents/Obstruction_detector/assets/images/calibration/distortion.npy",
+    "image_size": [2048, 1536]
+  }
+}
